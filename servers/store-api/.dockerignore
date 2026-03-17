@@ -1,0 +1,15 @@
+.git
+.gitignore
+.github
+README.md
+DEPLOYMENT.md
+API_EXAMPLES.md
+Makefile
+.env
+.env.local
+testdata
+tests
+.air.toml
+tmp
+vendor
+\*.md

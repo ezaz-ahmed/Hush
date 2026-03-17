@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  store-api:
+    image: store-api:v1.0.0
+    container_name: store-api-prod
+    environment:
+      ENV: production
+      HOST: 0.0.0.0
+      PORT: 8080
+      DATABASE_URL: ${DATABASE_URL}
+      DB_MAX_CONNS: 25
+      DB_MIN_CONNS: 5
+      JWT_SECRET: ${JWT_SECRET}
+      LOG_LEVEL: info
+    ports:
+      - '8080:8080'
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:8080/health']
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    restart: always
+    logging:
+      driver: 'json-file'
+      options:
+        max-size: '10m'
+        max-file: '3'
