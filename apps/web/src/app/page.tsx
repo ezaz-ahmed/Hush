@@ -1,7 +1,7 @@
 import { status } from '../lib/status';
 
-export default function HomePage() {
-  const { ok, service } = status();
+export default async function HomePage() {
+  const { ok, service } = await status();
   return (
     <main className="flex min-h-screen flex-col items-center justify-center gap-2">
       <h1 className="text-2xl font-semibold">Hush</h1>
