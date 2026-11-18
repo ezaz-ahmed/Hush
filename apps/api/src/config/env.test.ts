@@ -10,8 +10,9 @@ describe('validateEnv', () => {
     expect(validateEnv({ PORT: '6000' })).toEqual({ PORT: 6000 });
   });
 
-  it.each(['abc', '0', '70000'])('rejects PORT=%s and names PORT', (PORT) => {
-    expect(() => validateEnv({ PORT })).toThrow(/PORT/);
+  it.each(['abc', '0', '70000'])('rejects PORT=%s with only the variable name', (PORT) => {
+    // Exact message: anything more (zod's text, the value) fails, which pins "names only".
+    expect(() => validateEnv({ PORT })).toThrow(new Error('Invalid env: PORT'));
   });
 
   it('never puts env values in the error', () => {

@@ -21,7 +21,10 @@ describe('ZodValidationPipe', () => {
       expect.unreachable();
     } catch (e) {
       expect(e).toBeInstanceOf(BadRequestException);
-      expect((e as BadRequestException).getResponse()).toMatchObject({
+      // toEqual, not toMatchObject: any extra field (zod's message, the input) must fail this.
+      expect((e as BadRequestException).getResponse()).toEqual({
+        statusCode: 400,
+        error: 'Bad Request',
         message: [
           { path: ['name'], code: 'invalid_type' },
           { path: ['age'], code: 'invalid_type' },
@@ -34,6 +37,20 @@ describe('ZodValidationPipe', () => {
     const pii = 'jane.doe@example.com';
     try {
       pipe.transform({ name: 'ok', age: pii });
+      expect.unreachable();
+    } catch (e) {
+      expect(JSON.stringify((e as BadRequestException).getResponse())).not.toContain(pii);
+    }
+  });
+
+  it('never echoes input that zod puts in its own message', () => {
+    // zod's unrecognized_keys message quotes the key, so this leaks if messages are passed through.
+    const pii = 'jane.doe@example.com';
+    try {
+      new ZodValidationPipe(z.object({ name: z.string() }).strict()).transform({
+        name: 'ok',
+        [pii]: 1,
+      });
       expect.unreachable();
     } catch (e) {
       expect(JSON.stringify((e as BadRequestException).getResponse())).not.toContain(pii);

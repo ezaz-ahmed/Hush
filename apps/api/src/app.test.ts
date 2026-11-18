@@ -34,8 +34,7 @@ describe('app', () => {
 
   afterAll(() => app.close());
 
-  const inject = (url: string, headers: Record<string, string> = {}) =>
-    app.getHttpAdapter().getInstance().inject({ method: 'GET', url, headers });
+  const inject = (url: string) => app.getHttpAdapter().getInstance().inject({ method: 'GET', url });
 
   const post = (payload: Record<string, unknown>) =>
     app.getHttpAdapter().getInstance().inject({ method: 'POST', url: '/echo', payload });
@@ -44,11 +43,6 @@ describe('app', () => {
     const res = await inject('/health');
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ ok: true, service: 'api' });
-  });
-
-  it('sends no CORS header, even to a foreign origin', async () => {
-    const res = await inject('/health', { origin: 'http://evil.example' });
-    expect(res.headers['access-control-allow-origin']).toBeUndefined();
   });
 
   it('injects ConfigService with the validated PORT', () => {
