@@ -50,11 +50,12 @@ root pins (package.json, pnpm-workspace.yaml, .nvmrc)
 ### Phase 3: Quality and Docs
 
 - [x] Task 5: ESLint and Prettier across the repo
-- [ ] Task 6: README with setup and the root script reference
+- [x] Task 6: README with setup and the root script reference
 
 ### Checkpoint C (Complete)
 
-- [ ] All eight success criteria in SPEC.md are verified, then human review
+- [x] All eight success criteria in SPEC.md are verified
+- [ ] Human review
 
 ## Risks and Mitigations
 

@@ -112,13 +112,13 @@ Plan: [plan.md](plan.md) · Spec: [SPEC.md](../SPEC.md)
 
 **Acceptance criteria:**
 
-- [ ] Setup: `nvm use`, install pnpm 12, `pnpm install`
-- [ ] A table with a one-line description of each root script: `dev`, `build`, `lint`, `typecheck`, `test`, `format`, `format:check`
-- [ ] A short workspace layout section and a `--filter` example
+- [x] Setup: `nvm use`, install pnpm 12, `pnpm install`
+- [x] A table with a one-line description of each root script: `dev`, `build`, `lint`, `typecheck`, `test`, `format`, `format:check`
+- [x] A short workspace layout section and a `--filter` example
 
 **Verification:**
 
-- [ ] Following the README in a fresh clone produces a green `pnpm build && pnpm test`
+- [x] Following the README in a fresh clone produces a green `pnpm build && pnpm test`
 
 **Dependencies:** Task 5
 **Files:** `README.md`
@@ -126,5 +126,5 @@ Plan: [plan.md](plan.md) · Spec: [SPEC.md](../SPEC.md)
 
 ## Checkpoint C (Complete)
 
-- [ ] All 8 SPEC success criteria pass
+- [x] All 8 SPEC success criteria pass
 - [ ] Human review, then open a PR into `main`
