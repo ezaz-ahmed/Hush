@@ -6,9 +6,9 @@ Make `@hush/shared` the one place where API contracts live, as zod schemas with 
 
 **Acceptance criteria (from issue #4, two of them amended):**
 
-- [ ] `packages/shared` exports the API request/response types ~~for the API~~ **that exist today**: the health response and the validation-error body
-- [ ] zod schemas reused by API validation and ~~web forms~~ **the web's parsing of API responses**. Forms don't exist yet.
-- [ ] Builds cleanly in the Turborepo pipeline
+- [x] `packages/shared` exports the API request/response types ~~for the API~~ **that exist today**: the health response and the validation-error body
+- [x] zod schemas reused by API validation and ~~web forms~~ **the web's parsing of API responses**. Forms don't exist yet.
+- [x] Builds cleanly in the Turborepo pipeline
 
 The issue stays as written. The PR description explains the amendments:
 

@@ -3,7 +3,7 @@ import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fa
 import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { healthStatusSchema } from '@hush/shared';
+import { healthStatusSchema, validationErrorSchema } from '@hush/shared';
 import { z } from 'zod';
 import { AppModule } from './app.module.js';
 import { validateEnv } from './config/env.js';
@@ -64,6 +64,11 @@ describe('app', () => {
   it('validates a routed body: bad body gets 400 without echoing the value', async () => {
     const res = await post({ n: 'jane.doe@example.com' });
     expect(res.statusCode).toBe(400);
+    expect(validationErrorSchema.parse(res.json())).toEqual({
+      statusCode: 400,
+      error: 'Bad Request',
+      message: [{ path: ['n'], code: 'invalid_type' }],
+    });
     expect(res.body).not.toContain('jane.doe@example.com');
   });
 });

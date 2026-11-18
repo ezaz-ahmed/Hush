@@ -38,6 +38,17 @@ describe('ZodValidationPipe', () => {
     });
   });
 
+  it('turns symbol path segments into strings so the body stays JSON-safe', () => {
+    const withSymbol = new ZodValidationPipe(
+      z.any().superRefine((_value, ctx) => {
+        ctx.addIssue({ code: 'custom', path: [Symbol('k'), 0] });
+      }),
+    );
+    expect(errorOf(() => withSymbol.transform({})).getResponse()).toMatchObject({
+      message: [{ path: ['Symbol(k)', 0], code: 'custom' }],
+    });
+  });
+
   it('never echoes input that zod puts in its own message', () => {
     // zod's unrecognized_keys message quotes the key, so this leaks if messages are passed through.
     const pii = 'jane.doe@example.com';
