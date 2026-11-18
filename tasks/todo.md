@@ -53,14 +53,14 @@ Plan: [plan.md](plan.md) · Spec: [SPEC.md](../SPEC.md)
 
 **Acceptance criteria:**
 
-- [ ] `@next/eslint-plugin-next` is a root dev dep, pinned to the same minor version as `next`.
-- [ ] `eslint.config.js` has a block for `apps/web/**/*.{ts,tsx}` with `settings.next.rootDir: 'apps/web'`.
-- [ ] `pnpm lint` passes on the current code.
+- [x] `@next/eslint-plugin-next` is a root dev dep, pinned to the same minor version as `next`.
+- [x] `eslint.config.js` has a block for `apps/web/**/*.{ts,tsx}` with `settings.next.rootDir` set to the absolute `apps/web` path.
+- [x] `pnpm lint` passes on the current code.
 
 **Verification:**
 
-- [ ] `pnpm lint` exits 0
-- [ ] Manual: temporarily add `<img src="/x.png" />` to `page.tsx`. `pnpm lint` reports `@next/next/no-img-element`. Then revert the change.
+- [x] `pnpm lint` exits 0
+- [x] Manual: temporarily add `<img src="/x.png" />` to `page.tsx`. `pnpm lint` reports `@next/next/no-img-element`. Then revert the change.
 
 **Dependencies:** Task 1
 **Files:** `package.json`, `eslint.config.js`, `pnpm-lock.yaml`

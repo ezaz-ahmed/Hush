@@ -115,10 +115,10 @@ export const status = (): HealthStatus => health('web');
 import nextPlugin from '@next/eslint-plugin-next';
 // ...
 {
-  files: ['apps/web/**/*.{ts,tsx}'],
-  plugins: { '@next/next': nextPlugin },
-  settings: { next: { rootDir: 'apps/web' } },
-  rules: { ...nextPlugin.configs.recommended.rules, ...nextPlugin.configs['core-web-vitals'].rules },
+  files: ['apps/web/**/*.{js,mjs,ts,tsx}'],
+  ...nextPlugin.configs['core-web-vitals'], // plugin + all recommended rules, CWV ones upgraded
+  // Absolute because Turbo runs eslint from inside apps/web.
+  settings: { next: { rootDir: path.join(import.meta.dirname, 'apps/web') } },
 },
 ```
 
