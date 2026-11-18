@@ -34,10 +34,10 @@ root pins (package.json, pnpm-workspace.yaml, .nvmrc)
 
 ### Phase 2: Apps
 - [x] Task 3: `@hush/api` stub that consumes shared
-- [ ] Task 4: `@hush/web` stub that consumes shared
+- [x] Task 4: `@hush/web` stub that consumes shared
 
 ### Checkpoint B
-- [ ] The build order is shared → (api, web), `pnpm dev` runs both stubs, and all tasks are green
+- [x] The build order is shared → (api, web), `pnpm dev` runs both stubs, and all tasks are green
 
 ### Phase 3: Quality and Docs
 - [ ] Task 5: ESLint and Prettier across the repo

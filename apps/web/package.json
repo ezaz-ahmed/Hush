@@ -1,0 +1,14 @@
+{
+  "name": "@hush/web",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@hush/shared": "workspace:*"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --dir src"
+  }
+}

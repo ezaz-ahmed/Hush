@@ -58,19 +58,19 @@ Plan: [plan.md](plan.md) · Spec: [SPEC.md](../SPEC.md)
 **Description:** Same as Task 3, for the web workspace. Next.js replaces it in a later ticket.
 
 **Acceptance criteria:**
-- [ ] `apps/web` follows the same shape as api and depends on `@hush/shared` through `workspace:*`
-- [ ] The smoke test asserts on `health('web')`
+- [x] `apps/web` follows the same shape as api and depends on `@hush/shared` through `workspace:*`
+- [x] The smoke test asserts on `health('web')`
 
 **Verification:**
-- [ ] `pnpm build && pnpm typecheck && pnpm test` exit 0 across all 3 workspaces
-- [ ] `pnpm dev` runs the api and web stubs at the same time
+- [x] `pnpm build && pnpm typecheck && pnpm test` exit 0 across all 3 workspaces
+- [x] `pnpm dev` runs the api and web stubs at the same time
 
 **Dependencies:** Task 2 (it can run in parallel with Task 3)
 **Files:** `apps/web/{package.json,tsconfig.json,src/index.ts,src/index.test.ts}`
 **Scope:** S
 
 ## Checkpoint B
-- [ ] SPEC success criteria 1–6 are verified. Commit.
+- [x] SPEC success criteria 1, 2 and 4–6 are verified. Criterion 3 is verified except for `lint`, which arrives in Task 5. Commit.
 
 ## Task 5: ESLint and Prettier across the repo
 **Description:** One flat ESLint config and one Prettier config at the root, with a `lint` script in every workspace.

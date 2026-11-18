@@ -197,6 +197,12 @@ importers:
         specifier: workspace:*
         version: link:../../packages/shared
 
+  apps/web:
+    dependencies:
+      '@hush/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
+
   packages/shared: {}
 
 packages:
