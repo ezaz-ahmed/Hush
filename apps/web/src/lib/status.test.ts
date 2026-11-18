@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { status } from './index.js';
+import { status } from './status';
 
 describe('web status', () => {
   it('reports web as ok', () => {

@@ -1,139 +1,151 @@
-# Spec: Monorepo Foundation (pnpm + Turborepo)
+# Spec: Scaffold Next.js Web App (`apps/web`)
 
 ## Objective
 
-Set up Hush as a TypeScript monorepo so that web, API and shared code live in one repo with a single install, one set of commands and cached builds. This replaces the removed Go `store-api` (`08143de`) and starts the project fresh.
+Turn the `@hush/web` TypeScript stub into a real Next.js app, so later UI tickets have a working shell to build in. Ticket #1 (the monorepo foundation) is merged. Its spec is archived at [docs/specs/1-initialise-pnpm-turborepo-monorepo.md](docs/specs/1-initialise-pnpm-turborepo-monorepo.md).
 
 **Users:** developers working on Hush, both humans and agents.
 
 **Acceptance criteria (from the issue):**
 
-- [ ] pnpm workspaces with `apps/web`, `apps/api` and `packages/shared`
-- [ ] Turborepo pipelines for `dev`, `build`, `lint`, `typecheck` and `test`
-- [ ] Root scripts documented in the README
-- [ ] `.nvmrc` and `engines` pin Node LTS (26)
+- [ ] Next.js (App Router) in `apps/web` with TypeScript strict
+- [ ] Tailwind CSS configured
+- [ ] Base layout, home page placeholder
+- [ ] Imports types from `packages/shared`
 
-**Out of scope:** Next.js and NestJS scaffolding, CI, Docker, env handling, databases, deploys, Husky/commit hooks and changesets. Each of these is its own ticket.
+**Out of scope:** calling `apps/api`, env handling, auth, a component library (shadcn and similar), `next/font`, dark mode, a design system, E2E tests, deploys and CI. Each of these is its own ticket.
 
 ## Assumptions
 
-1. `apps/web` and `apps/api` are **minimal TypeScript stubs** for now. Next.js (web) and NestJS on the Fastify adapter (api) come in later tickets.
-2. Node **26 LTS** and pnpm **12.21.0** (your current local version) are pinned through the `packageManager` field, which pnpm enforces itself. Node 26 doesn't bundle Corepack.
-3. The tooling is **ESLint (flat config) + Prettier + Vitest + TypeScript strict**.
-4. `packages/shared` compiles to `dist/` with `tsc` and the apps consume it as `"@hush/shared": "workspace:*"`. Compiled output is used instead of raw TS source because Next and Nest each have their own bundler or loader quirks.
-5. Package scope is `@hush/*`, and all packages are `"private": true`.
+1. **Next 16.4 + React 19.3**, the current stable versions, using the App Router with a `src/` directory. Turbopack is the default bundler in Next 16 for both dev and build.
+2. **Tailwind 4.3** with the CSS-first setup: `@tailwindcss/postcss` plus `@import 'tailwindcss'` in `globals.css`. There is no `tailwind.config.js`.
+3. `@hush/shared` stays as it is: compiled ESM in `dist/`, consumed through `workspace:*`. Next reads the built JS, so `transpilePackages` isn't needed. Turbo's `^build` already builds shared first.
+4. `apps/web/tsconfig.json` still extends `tsconfig.base.json` (so `strict` and `noUncheckedIndexedAccess` are inherited). It overrides only what Next needs: `module: esnext`, `moduleResolution: bundler`, `jsx`, `noEmit`, the DOM libs and the `next` plugin. Next rewrites parts of the tsconfig on first run, and we commit what it writes.
+5. Pages and layouts render on the server by default. `'use client'` is added only when something needs it, and nothing in this ticket does.
+6. The dev server runs on Next's default port, 3000.
 
 ## Tech Stack
 
-| Concern         | Choice                                                                                                                         |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| Runtime         | Node 26 LTS (`.nvmrc`: `26`, `engines.node`: `">=26 <27"`)                                                                     |
-| Package manager | pnpm 12 workspaces with `engineStrict: true` in `pnpm-workspace.yaml` (pnpm 12 ignores `engine-strict` in `.npmrc`)            |
-| Task runner     | Turborepo 2 (`turbo.json` with the `tasks` key)                                                                                |
-| Language        | TypeScript 6.0 (typescript-eslint 8 supports `<6.1`; TS 7 has no JS API for ESLint to use), `strict`, ESM (`"type": "module"`) |
-| Lint / format   | ESLint 10 flat config + `typescript-eslint` + Prettier                                                                         |
-| Test            | Vitest                                                                                                                         |
-| Stub dev runner | `tsx watch` (it gets replaced once the frameworks land)                                                                        |
+| Concern   | Choice                                                                                        |
+| --------- | --------------------------------------------------------------------------------------------- |
+| Framework | `next@16.4.x`, `react@19.3.x`, `react-dom@19.3.x` (deps of `@hush/web`)                       |
+| Types     | `@types/react`, `@types/react-dom` (dev deps of `@hush/web`)                                  |
+| Styling   | `tailwindcss@4.3.x`, `@tailwindcss/postcss@4.3.x` (dev deps of `@hush/web`)                   |
+| Lint      | `@next/eslint-plugin-next@16.4.x` (root dev dep, applied to `apps/web/**` in the root config) |
+| Test      | Vitest (already at the root)                                                                  |
+
+Everything else stays on ticket #1's stack: Node 26, pnpm 12, Turbo 2, TS 6.0, ESLint 10 and Prettier.
 
 ## Commands
 
-Run all of these from the repo root:
+Root commands don't change. The `@hush/web` scripts become:
+
+```jsonc
+"dev":       "next dev",                       // http://localhost:3000
+"build":     "next build",                     // outputs .next/
+"start":     "next start",                     // local prod check only, not a Turbo task
+"lint":      "eslint .",
+"typecheck": "next typegen && tsc --noEmit",   // typegen writes .next/types so a clean checkout typechecks
+"test":      "vitest run --dir src"
+```
 
 ```bash
-nvm use                 # picks Node 26 from .nvmrc
-npm i -g pnpm@12        # Node 26 no longer bundles Corepack; pnpm enforces the packageManager pin itself
-pnpm install
-
-pnpm dev                # turbo run dev (persistent, no cache, all apps)
-pnpm build              # turbo run build (shared first, then the apps)
-pnpm lint               # turbo run lint
-pnpm typecheck          # turbo run typecheck (tsc --noEmit)
-pnpm test               # turbo run test (vitest run)
-pnpm format             # prettier --write .
-pnpm format:check       # prettier --check .
-
-# Scope to one workspace
-pnpm turbo run test --filter=@hush/api
 pnpm --filter @hush/web dev
+pnpm turbo run build --filter=@hush/web    # builds @hush/shared first
 ```
 
 ## Project Structure
 
 ```
-.nvmrc                 → "26"
-package.json           → root scripts, engines, packageManager, shared devDeps
-pnpm-workspace.yaml    → apps/*, packages/*, engineStrict, allowBuilds (esbuild)
-turbo.json             → task graph
-tsconfig.base.json     → strict compiler options every package extends
-eslint.config.js       → single flat config for the whole repo
-.prettierrc            → formatting rules
-README.md              → setup + root script reference
-
-apps/web/              → @hush/web: stub (Next.js later)
-  src/index.ts, src/index.test.ts, package.json, tsconfig.json
-apps/api/              → @hush/api: stub (NestJS + Fastify later)
-  src/index.ts, src/index.test.ts, package.json, tsconfig.json
-packages/shared/       → @hush/shared: shared types and utilities
-  src/index.ts, src/index.test.ts, package.json, tsconfig.json
+apps/web/
+  package.json
+  tsconfig.json          → extends ../../tsconfig.base.json with Next overrides
+  next.config.ts         → empty config object, typed with NextConfig
+  postcss.config.mjs     → { plugins: { '@tailwindcss/postcss': {} } }
+  next-env.d.ts          → generated by Next, gitignored
+  src/
+    app/
+      layout.tsx         → <html lang="en">, metadata, imports globals.css
+      page.tsx           → home placeholder, renders status from @hush/shared
+      globals.css        → @import 'tailwindcss';
+    lib/
+      status.ts          → status(): HealthStatus (moved from src/index.ts)
+      status.test.ts     → Vitest smoke test (moved from src/index.test.ts)
 ```
 
-Each workspace defines the same five scripts (`dev`, `build`, `lint`, `typecheck`, `test`) so Turbo can run them all the same way.
+These go away: `apps/web/src/index.ts`, `apps/web/src/index.test.ts` and the `tsx watch` dev script.
 
-### `turbo.json` task graph
+Other files that change:
 
-| Task        | dependsOn | outputs                                                   | cache  | notes                  |
-| ----------- | --------- | --------------------------------------------------------- | ------ | ---------------------- |
-| `build`     | `^build`  | `dist/**` (Next later adds `.next/**`, `!.next/cache/**`) | yes    |                        |
-| `typecheck` | `^build`  | —                                                         | yes    | needs shared's `.d.ts` |
-| `lint`      | —         | —                                                         | yes    |                        |
-| `test`      | `^build`  | —                                                         | yes    |                        |
-| `dev`       | `^build`  | —                                                         | **no** | `persistent: true`     |
+- `turbo.json`: `build.outputs` gains `.next/**`, `!.next/cache/**` and `!.next/dev/**`.
+- `eslint.config.js`: adds a block for the Next plugin.
+- `.gitignore`: adds `next-env.d.ts`. `.next` is already ignored.
+- `README.md`: notes the web dev URL.
 
 ## Code Style
 
-- ESM imports, named exports and no default exports in `shared`.
-- Files are kebab-case, types are PascalCase, and functions and variables are camelCase.
-- Prettier settings: 2-space indent, single quotes, trailing commas, 100-column width.
+The ticket #1 conventions still apply. One exception: Next requires `page.tsx` and `layout.tsx` to use **default exports**. Everywhere else, use named exports.
 
-```ts
-// packages/shared/src/index.ts
-export type HealthStatus = { ok: boolean; service: string };
+```tsx
+// apps/web/src/app/page.tsx
+import { status } from '../lib/status';
 
-export const health = (service: string): HealthStatus => ({ ok: true, service });
+export default function HomePage() {
+  const { ok, service } = status();
+  return (
+    <main className="flex min-h-screen items-center justify-center">
+      <h1 className="text-2xl font-semibold">Hush</h1>
+      <p className="text-sm text-neutral-500">
+        {service}: {ok ? 'ok' : 'down'}
+      </p>
+    </main>
+  );
+}
 ```
 
 ```ts
-// apps/api/src/index.ts
-import { health } from '@hush/shared';
+// apps/web/src/lib/status.ts
+import { health, type HealthStatus } from '@hush/shared';
 
-console.log(health('api'));
+export const status = (): HealthStatus => health('web');
+```
+
+```js
+// eslint.config.js (added block)
+import nextPlugin from '@next/eslint-plugin-next';
+// ...
+{
+  files: ['apps/web/**/*.{js,mjs,ts,tsx}'],
+  ...nextPlugin.configs['core-web-vitals'], // plugin + all recommended rules, CWV ones upgraded
+  // Absolute because Turbo runs eslint from inside apps/web.
+  settings: { next: { rootDir: path.join(import.meta.dirname, 'apps/web') } },
+},
 ```
 
 ## Testing Strategy
 
-- Vitest in every workspace, with tests colocated as `src/**/*.test.ts`.
-- Each workspace has one smoke test for now. The API test also imports from `@hush/shared`, which proves that workspace linking and the build order work.
-- No coverage threshold yet. Set one when there is real logic to cover.
-- E2E and integration tests are out of scope and arrive with the frameworks.
+- `src/lib/status.test.ts` checks that `status()` returns `{ ok: true, service: 'web' }`, which proves the `@hush/shared` import resolves at runtime.
+- `src/app/page.test.tsx` renders the server component with `react-dom/server`'s `renderToStaticMarkup` (already a dependency) and stubs `status()` to cover both the ok and down branches. RTL and jsdom are still left out. `next build` proves that pages compile and prerender.
+- Type safety is enforced by `pnpm typecheck`. Changing `HealthStatus` in shared must break the web typecheck.
+- No coverage threshold yet.
 
 ## Boundaries
 
-- **Always:** keep each workspace on the five standard script names, pin versions in `package.json`, and run `pnpm build && pnpm lint && pnpm typecheck && pnpm test` before committing.
-- **Ask first:** adding any dependency beyond the stack table, changing the Node or pnpm pins, adding new workspaces, or setting up CI.
-- **Never:** commit `node_modules`, `dist` or `.turbo`; use npm or yarn lockfiles; add framework code in this ticket; or disable lint or type rules to get to green.
+- **Always:** keep the five standard script names; pin versions in `package.json`; run `pnpm build && pnpm lint && pnpm typecheck && pnpm test` before committing; use server components by default.
+- **Ask first:** adding any dependency outside the stack table (UI kits, fonts, state libraries, test renderers); changing `tsconfig.base.json`; adding `'use client'` boundaries; touching `apps/api`.
+- **Never:** commit `.next` or `next-env.d.ts`; turn off `strict` or add `ignoreBuildErrors`/`ignoreDuringBuilds`; copy shared types into web instead of importing them; build pages beyond the placeholder.
 
 ## Success Criteria
 
-1. On a clean clone with Node 26, `pnpm install` succeeds and creates a single `pnpm-lock.yaml`.
-2. On Node 24, `pnpm install` fails because of the `engines` check and `engineStrict`.
-3. `pnpm build`, `pnpm lint`, `pnpm typecheck` and `pnpm test` each exit 0 across all three workspaces.
-4. A second `pnpm build` with no changes reports `FULL TURBO`, meaning every task was a cache hit.
-5. `pnpm build` builds `@hush/shared` before both apps.
-6. `pnpm dev` starts both app stubs at the same time and they restart when a file changes.
-7. The README lists every root script with a one-line description, plus the setup steps (`nvm use`, install pnpm 12, `pnpm install`).
-8. `.gitignore` covers `node_modules`, `dist`, `.turbo` and `.next`.
+1. `pnpm dev` serves `http://localhost:3000`, and the page shows "Hush" and "web: ok" styled by Tailwind (centered layout, sized heading).
+2. `pnpm build`, `pnpm lint`, `pnpm typecheck` and `pnpm test` each exit 0 across all three workspaces on a clean clone (no `.next`, no `dist`).
+3. A second `pnpm build` with no changes reports `FULL TURBO`.
+4. `apps/web/tsconfig.json` resolves to `strict: true` (check with `tsc --showConfig`).
+5. Renaming `service` in shared's `HealthStatus` makes `pnpm typecheck` fail in `@hush/web`.
+6. Adding `<img src="/x.png" />` to `page.tsx` makes `pnpm lint` fail with `@next/next/no-img-element` (raised from Next's default `warn` to `error`).
+7. `apps/web` has no `tailwind.config.*` and no `src/index.ts`.
 
 ## Open Questions
 
-1. **NestJS and ESM:** Nest's default setup is CommonJS with decorators. When the Nest ticket lands, should `shared` also emit CJS (dual build), or should the API run as ESM? The plan for now is ESM-only and to revisit then.
-2. ~~pnpm 12 vs Corepack~~ Resolved: Node 26 doesn't ship Corepack. pnpm is installed globally and the `packageManager` field pins its version.
+1. ~~**Node 26 support**~~ Resolved: Next 16.4.6 builds, typechecks and serves on Node 26.13.1 (Checkpoint A).
+2. ~~**`next typegen` in typecheck**~~ Resolved: both. `typegen` lets `pnpm --filter @hush/web typecheck` work on a clean checkout, and `apps/web/turbo.json` makes the Turbo `typecheck` depend on `build` so `typegen` and `next build` never write `.next/types` concurrently. `build` is usually a cache hit.
