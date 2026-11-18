@@ -27,10 +27,10 @@ root pins (package.json, pnpm-workspace.yaml, .nvmrc)
 ## Task List
 ### Phase 1: Foundation
 - [x] Task 1: Root workspace and Node/pnpm pins
-- [ ] Task 2: `@hush/shared` built and tested through Turbo
+- [x] Task 2: `@hush/shared` built and tested through Turbo
 
 ### Checkpoint A
-- [ ] `pnpm build && pnpm typecheck && pnpm test` pass, and the second `pnpm build` reports FULL TURBO
+- [x] `pnpm build && pnpm typecheck && pnpm test` pass, and the second `pnpm build` reports FULL TURBO
 
 ### Phase 2: Apps
 - [ ] Task 3: `@hush/api` stub that consumes shared

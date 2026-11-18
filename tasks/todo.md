@@ -22,20 +22,21 @@ Plan: [plan.md](plan.md) · Spec: [SPEC.md](../SPEC.md)
 **Description:** Add the Turbo task graph and the strict base tsconfig, then create the shared package as the first workspace that runs end to end.
 
 **Acceptance criteria:**
-- [ ] `turbo.json` defines `build` (`^build`, outputs `dist/**`), `typecheck` (`^build`), `lint`, `test` (`^build`) and `dev` (`^build`, `cache: false`, `persistent: true`)
-- [ ] `tsconfig.base.json` is strict, ESM (`module`/`moduleResolution: NodeNext`) and has `declaration: true`
-- [ ] `packages/shared` exports `health()` and the `HealthStatus` type from `dist`, and its smoke test passes
+- [x] `turbo.json` defines `build` (`^build`, outputs `dist/**`), `typecheck` (`^build`), `lint`, `test` (`^build`) and `dev` (`^build`, `cache: false`, `persistent: true`)
+- [x] `tsconfig.base.json` is strict, ESM (`module`/`moduleResolution: NodeNext`) and has `declaration: true`
+- [x] `packages/shared` exports `health()` and the `HealthStatus` type from `dist`, and its smoke test passes
 
 **Verification:**
-- [ ] `pnpm build && pnpm typecheck && pnpm test` exit 0
-- [ ] A second `pnpm build` prints `FULL TURBO`
+- [x] `pnpm build && pnpm typecheck && pnpm test` exit 0
+- [x] A second `pnpm build` prints `FULL TURBO`
 
 **Dependencies:** Task 1
-**Files:** `turbo.json`, `tsconfig.base.json`, `packages/shared/{package.json,tsconfig.json,src/index.ts,src/index.test.ts}`
+**Files:** `turbo.json`, `tsconfig.base.json`, `packages/shared/{package.json,tsconfig.json,tsconfig.build.json,src/index.ts,src/index.test.ts}`
+**Notes:** `tsconfig.build.json` keeps test files out of `dist/`, and `globalDependencies` invalidates the cache when `tsconfig.base.json` changes.
 **Scope:** M
 
 ## Checkpoint A
-- [ ] All tasks pass and caching works. Commit.
+- [x] All tasks pass and caching works. Commit.
 
 ## Task 3: `@hush/api` stub that consumes shared
 **Description:** A minimal API workspace that imports `@hush/shared`. This proves that workspace linking and the build order work.
