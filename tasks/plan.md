@@ -48,11 +48,11 @@ Tasks 2 and 3 are independent of each other and can run in either order or in pa
 
 ### Phase 3: Wrap-up
 
-- [ ] Task 4: README update and success-criteria sweep
+- [x] Task 4: README update and success-criteria sweep
 
 ### Checkpoint B: Complete
 
-- [ ] All seven spec success criteria verified
+- [x] All seven spec success criteria verified
 - [ ] Human review, then open a PR into `main`
 
 ## Risks and Mitigations

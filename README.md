@@ -19,15 +19,15 @@ pnpm install
 
 Run these from the repo root. Each Turbo task runs in every workspace that defines it, and its results are cached.
 
-| Script              | What it does                                                             |
-| ------------------- | ------------------------------------------------------------------------ |
-| `pnpm dev`          | Starts every workspace in watch mode. `@hush/shared` builds first.       |
-| `pnpm build`        | Builds every workspace in dependency order, with shared before the apps. |
-| `pnpm lint`         | Runs ESLint in every workspace.                                          |
-| `pnpm typecheck`    | Runs `tsc --noEmit` in every workspace.                                  |
-| `pnpm test`         | Runs Vitest once in every workspace.                                     |
-| `pnpm format`       | Formats the repo with Prettier.                                          |
-| `pnpm format:check` | Checks formatting without writing anything. Use it in CI.                |
+| Script              | What it does                                                                                      |
+| ------------------- | ------------------------------------------------------------------------------------------------- |
+| `pnpm dev`          | Starts every workspace in watch mode (web on http://localhost:3000). `@hush/shared` builds first. |
+| `pnpm build`        | Builds every workspace in dependency order, with shared before the apps.                          |
+| `pnpm lint`         | Runs ESLint in every workspace.                                                                   |
+| `pnpm typecheck`    | Runs `tsc --noEmit` in every workspace.                                                           |
+| `pnpm test`         | Runs Vitest once in every workspace.                                                              |
+| `pnpm format`       | Formats the repo with Prettier.                                                                   |
+| `pnpm format:check` | Checks formatting without writing anything. Use it in CI.                                         |
 
 To run a task for one workspace and everything it depends on:
 
@@ -39,7 +39,7 @@ pnpm turbo run dev --filter=@hush/web...
 ## Workspaces
 
 ```
-apps/web         @hush/web     web app (stub; Next.js planned)
+apps/web         @hush/web     Next.js App Router + Tailwind, http://localhost:3000
 apps/api         @hush/api     API (stub; NestJS + Fastify planned)
 packages/shared  @hush/shared  shared types and utilities, built to dist/
 ```

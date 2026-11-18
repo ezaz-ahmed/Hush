@@ -72,14 +72,14 @@ Plan: [plan.md](plan.md) · Spec: [SPEC.md](../SPEC.md)
 
 **Acceptance criteria:**
 
-- [ ] The README describes `apps/web` as Next.js (not a stub) and mentions `http://localhost:3000`.
-- [ ] Every spec success criterion has been checked and passes.
+- [x] The README describes `apps/web` as Next.js (not a stub) and mentions `http://localhost:3000`.
+- [x] Every spec success criterion has been checked and passes.
 
 **Verification:**
 
-- [ ] `rm -rf apps/*/dist apps/web/.next packages/*/dist .turbo apps/*/.turbo packages/*/.turbo && pnpm build && pnpm lint && pnpm typecheck && pnpm test` exits 0
-- [ ] Manual: rename `service` in `HealthStatus` and confirm `pnpm typecheck` fails in `@hush/web`. Then revert the change.
-- [ ] `pnpm format:check` passes
+- [x] `rm -rf apps/*/dist apps/web/.next packages/*/dist .turbo apps/*/.turbo packages/*/.turbo && pnpm build && pnpm lint && pnpm typecheck && pnpm test` exits 0
+- [x] Manual: rename `service` in `HealthStatus` and confirm `pnpm typecheck` fails in `@hush/web`. Then revert the change.
+- [x] `pnpm format:check` passes
 
 **Dependencies:** Tasks 2, 3
 **Files:** `README.md`
@@ -87,5 +87,5 @@ Plan: [plan.md](plan.md) · Spec: [SPEC.md](../SPEC.md)
 
 ## Checkpoint B: Complete
 
-- [ ] All seven spec success criteria pass
+- [x] All seven spec success criteria pass
 - [ ] Human review, then open a PR into `main`
