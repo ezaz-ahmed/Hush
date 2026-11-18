@@ -1,150 +1,103 @@
-# Spec: Environment config validation and `.env.example`
+# Spec: Basic GitHub Actions CI (lint, typecheck, build, unit tests)
 
 ## Objective
 
-Make every environment variable the code reads today validated with zod at startup, in both apps, with a clear names-only error, and documented in a `.env.example`. Ticket #3 already did most of this for the API. Its spec is archived at [docs/specs/3-scaffold-nestjs-api.md](docs/specs/3-scaffold-nestjs-api.md). The web app still reads `API_URL` unvalidated. [apps/web/src/lib/api-url.ts](apps/web/src/lib/api-url.ts) carries a `shortcut:` comment pointing at this ticket.
+Run the repo's quality gates on GitHub for every PR and every push to `main`, so a PR cannot merge with broken lint, types, tests or build. Today there is no `.github/` folder at all; the gates only run locally (CLAUDE.md "Commits" sequence).
 
-**Variables that exist today** (from `grep process.env` over `apps/*/src`, `apps/web/next.config.ts`, `packages/*/src`):
+**Acceptance criteria (from issue #9):**
 
-| App | Variable  | Read in                                                                                                       | Default                 |
-| --- | --------- | ------------------------------------------------------------------------------------------------------------- | ----------------------- |
-| api | `PORT`    | `apps/api/src/config/env.ts` via `ConfigModule.forRoot({ validate: validateEnv })`                            | `5555`                  |
-| web | `API_URL` | `apps/web/src/lib/api-url.ts`, imported by `next.config.ts` (rewrites) and `src/lib/status.ts` (server fetch) | `http://localhost:5555` |
+- [ ] Workflow on push and pull_request. Triggers: `push` to `main` and `pull_request` (any base). Not `push` on all branches: a PR branch would then run twice per push.
+- [ ] pnpm cache. `actions/setup-node` with `cache: pnpm` caches the pnpm store keyed on `pnpm-lock.yaml`.
+- [ ] Runs lint, typecheck, build, unit tests. Root scripts `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build` (all via Turbo; `^build` builds `@hush/shared` first, so no extra step).
+- [ ] Required status check on main. A repo setting, not code. See "Required check" below.
 
-There are no others. DB, LLM, embedding and tracing vars don't exist yet. Per CLAUDE.md rule 8, each future ticket adds its own vars to its app's schema and `.env.example`. Planned features don't get vars here.
+**Also in scope:**
 
-**Acceptance criteria (from issue #6):**
+- `pnpm format:check` as the first gate. CLAUDE.md requires it before every commit, so CI should hold the same bar. (Decision; drop it if you disagree.)
+- A CI status badge in `README.md` (one line).
 
-- [ ] Env vars validated with zod at startup (API and web). **Partly met.** API: done in #3. `envSchema` and `validateEnv` in `apps/api/src/config/env.ts` run through `ConfigModule.forRoot` in `app.module.ts`, and `main.ts` reads `PORT` from the typed `ConfigService<Env, true>`. Web: **to do.** `api-url.ts` reads `process.env.API_URL || default` with no schema.
-- [ ] App fails fast with a clear message on missing vars. **Partly met.** API: `validateEnv` throws `Invalid env: PORT` (names only, never values). `env.test.ts` pins this, including a test that a secret value never shows up in the message. Web: **to do.** Today a bad `API_URL` such as `nope` is baked into the rewrites and the fetch fails later. Nothing is required yet, because both vars have a default (see Open questions), so "missing" is only proven against a test schema with a required var.
-- [ ] `.env.example` lists every variable with a comment. **To do.** No `.env.example` exists anywhere. `apps/api/.env` exists locally (only `PORT`) and is ignored.
-- [x] `.env*` ignored by git. **Already met.** Root `.gitignore` has `.env*` and `!.env.example`. Checked: `git check-ignore -v` matches `apps/api/.env` and `apps/web/.env.local` to `.env*`, and `.env.example` / `apps/api/.env.example` to the `!.env.example` negation, so they are not ignored. No change.
-
-The PR description says which criteria #3 already met.
-
-**Out of scope:** vars for planned features; `NEXT_PUBLIC_*` vars (none exist); secrets management and deploy config (#83); per-environment `.env.production` files; making `API_URL` required in production (Open question 2).
+**Out of scope:** coverage upload or thresholds, Turbo remote cache, matrix builds, integration/e2e/evals jobs (none exist yet), deploy (#83), Dependabot.
 
 ## Not high-risk
 
-This touches no redaction, consent, audit, retention, guardrail or prompt code, so it is not a CLAUDE.md high-risk area. The rules that apply are rule 8 (no secrets in the repo; env validated with zod; vars listed in `.env.example`) and rule 2 (no secret or PII values in errors or logs).
+No redaction, consent, audit, retention, guardrail or prompt code changes. Rule 8 applies: the workflow uses no secrets and no env values.
 
 ## Design
 
-1. **One names-only parser in `@hush/shared`.** Move the body of the API's `validateEnv` into `packages/shared/src/env.ts`:
+One file, `.github/workflows/ci.yml`, one job with id `ci` (the check name GitHub shows and the name the required check pins; never rename it without updating the ruleset).
 
-   ```ts
-   export const parseEnv = <T extends z.ZodType>(schema: T, raw: Record<string, unknown>): z.output<T>
-   ```
+```yaml
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6 # reads packageManager (pnpm@12.21.0); must run before setup-node for cache: pnpm
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc # 26
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm format:check
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+```
 
-   It throws `new Error('Invalid env: A, B')`: deduplicated variable names, never values, never zod's issue text. Exported from `src/index.ts`.
+Action majors checked on 2026-11-19 via `gh api repos/<action>/releases/latest`: `actions/checkout` v7.0.1, `actions/setup-node` v7.1.0, `pnpm/action-setup` v6.1.1. Pinned to the major tag (not SHA); SHA pinning is a possible later hardening step.
 
-   **Why shared (the helper), and why per-app (the schemas):** the env _schemas_ are app-internal config, not request/response contracts between web and API. The API must never see `API_URL`, and the web must never see the API's future DB or LLM secrets. So each schema stays in its own app, and CLAUDE.md's "zod schemas from `@hush/shared`" rule, which is about shared request/response types, doesn't apply to them. The _helper_ is different. The "never print a value" guarantee is privacy logic, and it should exist and be tested once rather than copied into each app. Putting it in shared also lets a test schema with a required var prove the "missing var" case, which neither app can do yet.
+Cancel-in-progress only for PRs, so a running `main` build is never cancelled (GitHub may still drop a queued middle run if several pushes land at once). `timeout-minutes: 15` caps hung jobs; `persist-credentials: false` keeps the token out of `.git/config`.
 
-2. **API: no behaviour change.** `apps/api/src/config/env.ts` keeps `envSchema`, `Env` and `validateEnv`, with `validateEnv = (raw) => parseEnv(envSchema, raw)`. `AppModule` and `main.ts` stay as they are. The existing `env.test.ts` must still pass unchanged.
+**Env vars:** none needed. Checked the code: the API's `PORT` (`apps/api/src/config/env.ts`) and the web's `API_URL` (`apps/web/src/lib/env.ts`, imported by `next.config.ts` at build) both have defaults, and nothing else reads `process.env`. `next build` does not call the API: `src/lib/status.ts` fetches with `cache: 'no-store'`, so the page renders per request. If a future ticket adds a required var, it adds a non-secret placeholder to the workflow `env:` (never a real secret).
 
-3. **Web: `apps/web/src/lib/env.ts` replaces `api-url.ts`.**
+## Required check
 
-   ```ts
-   export const envSchema = z.object({
-     // Empty counts as unset (matches today's `||`); http(s) only; trailing slash stripped to avoid `//path`.
-     API_URL: z
-       .preprocess(
-         (v) => (v === '' ? undefined : v),
-         z.url({ protocol: /^https?$/ }).default('http://localhost:5555'),
-       )
-       .transform((u) => u.replace(/\/+$/, '')),
-   });
-   export const env = parseEnv(envSchema, process.env);
-   ```
+`main` already has an active ruleset `protect-main` (id 27566898: no deletion, no force push, PR required with 0 approvals). There is no classic branch protection. So the required check goes into that ruleset as a `required_status_checks` rule with context `ci` (GitHub Actions integration id 15368), not classic branch protection.
 
-   `next.config.ts` and `status.ts` import `env` and use `env.API_URL`. Delete `api-url.ts` and its `shortcut:` comment. Add `zod: 4.6.7` to `apps/web` dependencies. This is the same pinned version and the same pattern as `apps/api`, set in #3 (decision 4): pnpm won't let a workspace import a package it doesn't declare. No new package enters the lockfile.
-
-4. **When web validation runs.** `env.ts` validates when it is first imported, and `next.config.ts` imports it. Per Next 16's docs, `next.config.js` "gets used by the Next.js server and build phases" (`apps/web/node_modules/next/dist/docs/01-app/03-api-reference/05-config/01-next-config-js/index.md`, line 23). So a bad `API_URL` stops `next dev`, `next build` and `next start` before any request is served. Validating there matters because rewrites come from the config, and non-`NEXT_PUBLIC_` vars are server-only and read from `process.env` (`.../02-guides/environment-variables.md`, "Runtime Environment Variables"). `status.ts` reads the same validated `env` at request time. `instrumentation.ts` `register()` (`.../03-file-conventions/instrumentation.md`) would only cover server start, not build, so we don't use it. Next loads `.env*` from the app root, `apps/web/`, not `src/` (`environment-variables.md`, line 63, and "Good to know" at line 282).
-
-5. **`.env.example`, one per app**, next to where each app loads `.env`. Nest's `ConfigModule` reads `.env` from the cwd, `apps/api`. Next reads `.env*` from `apps/web`. Every var is commented and set to its default. No real values.
-
-   ```bash
-   # apps/api/.env.example
-   # Port the API listens on (localhost). Optional, default 5555.
-   PORT=5555
-   ```
-
-   ```bash
-   # apps/web/.env.example
-   # Base URL of the Hush API, http(s). Used for /api/* rewrites and server-side fetches.
-   # Read at build time for rewrites, so rebuild after changing it. Optional, default http://localhost:5555.
-   API_URL=http://localhost:5555
-   ```
-
-   CLAUDE.md rule 8 says "add new ones to `.env.example`". Read that as the app's own file. No CLAUDE.md edit is needed.
-
-6. **Turbo env passthrough.** Turbo 2 runs in strict env mode, so it strips undeclared vars from tasks. A prior session found this happens under `pnpm test`. `apps/web/turbo.json` already declares `API_URL` for `build` and `dev`. The API declares nothing, so `PORT=6000 pnpm dev` silently ignores the shell's `PORT`. A `.env` file still works, because Nest reads it itself. Add `apps/api/turbo.json` (`extends: ["//"]`, `dev.env: ["PORT"]`), mirroring web. Tests don't need it: they stub env with `vi.stubEnv` and must not depend on the shell.
+Order: merge this PR, let the workflow run once on `main`, then the PM updates the ruleset via `gh api -X PUT repos/ezaz-ahmed/Hush/rulesets/27566898` (sending the full existing rules list plus the new rule), **only after the user confirms**. The implementing agent does not change repo settings.
 
 ## Commands
 
 ```bash
-pnpm --filter @hush/web add zod@4.6.7
-pnpm --filter @hush/shared build
-pnpm --filter @hush/shared exec vitest run src/env.test.ts
-pnpm --filter @hush/web exec vitest run src/next-config.test.ts
-API_URL=nope pnpm --filter @hush/web build        # must fail: Invalid env: API_URL
-PORT=abc pnpm --filter @hush/api start            # must fail: Invalid env: PORT
-pnpm format && pnpm format:check
-pnpm lint && pnpm typecheck && pnpm test && pnpm build
+pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build   # same gates locally
+gh run list --workflow=ci.yml --limit 3                                       # after push
+gh pr checks <pr>                                                             # check named "ci" is green
 ```
-
-## Project structure
-
-```
-packages/shared/src/env.ts            + parseEnv (names-only zod env parser)
-packages/shared/src/env.test.ts       + tests
-packages/shared/src/index.ts          + export './env.js'
-apps/api/src/config/env.ts            validateEnv delegates to parseEnv
-apps/api/src/app.test.ts              + fail-fast case (bad PORT stops AppModule)
-apps/api/.env.example                 + new
-apps/api/turbo.json                   + new, dev.env PORT
-apps/web/src/lib/env.ts               + new (envSchema, env)
-apps/web/src/lib/api-url.ts           - deleted
-apps/web/src/lib/status.ts            import env
-apps/web/next.config.ts               import env
-apps/web/src/next-config.test.ts      + invalid-URL cases
-apps/web/.env.example                 + new
-apps/web/package.json                 + zod 4.6.7
-pnpm-lock.yaml                        updated
-```
-
-## Code style
-
-Existing conventions apply: named exports, `.js` extensions outside `apps/web`, zod 4 API, one-line why-comments. Error text format is fixed: `Invalid env: <NAME>[, <NAME>...]`.
 
 ## Testing strategy
 
-Vitest, tests next to source, no real env from the shell (`vi.stubEnv` plus `vi.resetModules`, as the existing web tests do).
+No unit tests: this is config. Proof is the workflow itself:
 
-- **`packages/shared/src/env.test.ts`** (new): valid input returns parsed output. A required var that is missing throws exactly `Invalid env: X`. Several bad vars are all named once. A secret value in either a bad var or an unrelated var never appears in the message.
-- **`apps/api/src/config/env.test.ts`**: unchanged, and it must stay green. That proves the refactor kept behaviour.
-- **API fail fast** (testable): with `PORT=abc` stubbed and modules reset, loading or compiling `AppModule` rejects with `Invalid env: PORT`.
-- **Web fail fast** (testable): in `next-config.test.ts`, importing `next.config` with `API_URL=nope` or `API_URL=ftp://x` rejects with exactly `Invalid env: API_URL`, and the message doesn't contain the value. The four existing cases (default, set, empty, trailing slash) stay unchanged and green. `status.test.ts` only changes the import path, if it changes at all.
-- **Manual:** the two "must fail" commands above exit non-zero and print the variable name and no value.
+1. Local: `ci.yml` passes `pnpm format:check` (Prettier formats YAML) and the full local gate sequence still passes.
+2. Remote: pushing the branch and opening the PR triggers a `pull_request` run; the `ci` check is green.
+3. Cache: a second run shows a pnpm cache hit in the setup-node step.
 
 ## Boundaries
 
-- **Always:** names only in env errors; every var the code reads appears in its app's schema and `.env.example` with a comment; run the full CLAUDE.md commit sequence.
-- **Ask first:** making any var required (no default); adding any dependency other than the already-pinned `zod` in web; a root `.env.example` instead of per-app files.
-- **Never:** commit a `.env` (only `.env.example`); add vars for features that don't exist; put env values in errors or logs; weaken or skip existing tests; read `process.env` directly outside each app's env module (except Nest's own `ConfigModule` loading).
+- Always: run the full CLAUDE.md commit sequence before committing; keep job id `ci`.
+- Ask first: changing repo settings or rulesets; adding secrets or env to the workflow; adding jobs beyond `ci`.
+- Never: put secrets or real env values in the workflow; use `continue-on-error` or skip a gate to get green.
 
 ## Success criteria
 
-1. `apps/web` reads `API_URL` only through `src/lib/env.ts`. `grep -rn "process.env" apps/*/src apps/web/next.config.ts` shows only the env modules and tests.
-2. `API_URL=nope pnpm --filter @hush/web build` and `PORT=abc pnpm --filter @hush/api start` each exit non-zero with `Invalid env: <NAME>` and no value.
-3. With no env set, `pnpm build` and the apps behave as before: API on 5555, web proxies to `http://localhost:5555`.
-4. `apps/api/.env.example` and `apps/web/.env.example` exist, are tracked, and list `PORT` and `API_URL` with comments. `git status` shows no `.env` files.
-5. New tests cover parseEnv (including missing and no-leak) and fail-fast for both apps. Existing env and next-config tests pass unchanged.
-6. `pnpm lint && pnpm typecheck && pnpm test && pnpm build` all pass from the root.
+- `.github/workflows/ci.yml` exists as above; PR for #9 shows a green `ci` check.
+- README shows the CI badge.
+- After merge and user confirmation, ruleset `protect-main` requires `ci`.
 
 ## Open questions
 
-1. **Where the names-only parser lives.** Default: `parseEnv` in `@hush/shared`, with schemas per app (Design 1). The alternative is a 4-line copy in web, which is smaller but duplicates privacy logic.
-2. **Should `API_URL` be required in production?** Default: no. Keep the localhost default so local dev needs zero config. The first var with no safe default (e.g. `DATABASE_URL`) will be required and will prove the "missing" path for real. Revisit with deploys (#83).
-3. **Per-app vs root `.env.example`.** Default: per-app, because each app loads `.env` from its own directory.
-4. **`apps/api/turbo.json` for `PORT`.** Default: include it (Design 6). It is one small file, and without it the shell's `PORT` is silently ignored under `pnpm dev`.
+None blocking. Decisions you may override: (1) `format:check` included as a gate; (2) triggers are push-to-`main` + `pull_request`, not push on every branch; (3) README badge included.
