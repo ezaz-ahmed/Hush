@@ -1,3 +1,4 @@
+import { parseEnv } from '@hush/shared';
 import { z } from 'zod';
 
 export const envSchema = z.object({
@@ -6,12 +7,4 @@ export const envSchema = z.object({
 
 export type Env = z.infer<typeof envSchema>;
 
-export const validateEnv = (raw: Record<string, unknown>): Env => {
-  const result = envSchema.safeParse(raw);
-  // Names only: env values may be secrets, so they never go in the message.
-  if (!result.success)
-    throw new Error(
-      `Invalid env: ${[...new Set(result.error.issues.map((i) => i.path.join('.')))].join(', ')}`,
-    );
-  return result.data;
-};
+export const validateEnv = (raw: Record<string, unknown>): Env => parseEnv(envSchema, raw);

@@ -37,4 +37,11 @@ describe('next config rewrites', () => {
       { source: '/api/:path*', destination: 'https://api.example.com/:path*' },
     ]);
   });
+
+  it.each(['nope', 'ftp://x'])('fails fast naming API_URL, never its value: %s', async (bad) => {
+    vi.stubEnv('API_URL', bad);
+    const err = await rewrites().catch((e: Error) => e);
+    expect(err).toEqual(new Error('Invalid env: API_URL'));
+    expect((err as Error).message).not.toContain(bad);
+  });
 });

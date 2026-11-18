@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const down = { ok: false, service: 'api' };
 
-// API_URL is read when api-url.ts loads, so each test pins it and re-imports; the shell's value must not leak in.
+// API_URL is read when lib/env.ts loads, so each test pins it and re-imports; the shell's value must not leak in.
 const loadStatus = async (apiUrl?: string) => {
   vi.stubEnv('API_URL', apiUrl);
   vi.resetModules();
