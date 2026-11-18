@@ -17,11 +17,11 @@ A privacy-first RAG assistant answering patient FAQs for a fictional telehealth 
 - **Web:** `apps/web` (`@hush/web`), Next.js App Router, TypeScript strict, Tailwind
 - **API:** `apps/api` (`@hush/api`), NestJS on the **Fastify** adapter (`@nestjs/platform-fastify`)
 - **Shared:** `packages/shared` (`@hush/shared`), types and zod schemas, built to `dist/`
-- **Database:** Postgres on Neon with pgvector, Drizzle ORM and drizzle-kit migrations
-- **Tests:** Vitest (unit), Testcontainers with `pgvector/pgvector` (integration), Playwright (e2e)
-- **Evals:** `evals/` folder, run with `pnpm eval`
+- **Database (planned):** Postgres on Neon with pgvector, Drizzle ORM and drizzle-kit migrations
+- **Tests:** Vitest (unit, v8 coverage). Planned: Testcontainers with `pgvector/pgvector` (integration), Playwright (e2e)
+- **Evals (planned):** `evals/` folder, run with `pnpm eval`
 
-Some of this is still planned; check the code before assuming a piece exists.
+Built today: the web home page showing API health, the API's `GET /health` with zod env validation and `ZodValidationPipe`, and shared health and error schemas. Anything marked planned does not exist yet; check the code before assuming a piece exists.
 
 ## Commands
 
@@ -56,13 +56,13 @@ pnpm --filter @hush/api exec vitest run -t "test name"
 apps/web         Next.js app
 apps/api         NestJS API (Fastify)
 packages/shared  shared types, zod schemas, utilities
-content/         knowledge base markdown (with licence metadata)
-evals/           golden sets, metrics, results history
-docs/            PDPA mapping, content sources, error analysis, AI workflow log
+content/         (planned) knowledge base markdown (with licence metadata)
+evals/           (planned) golden sets, metrics, results history
+docs/            AI workflow log, retired specs; planned: PDPA mapping, content sources, error analysis
 docs/specs/      retired specs, one per ticket
 ```
 
-Tests sit next to source as `src/**/*.test.ts(x)`. Integration tests use `*.int.test.ts`; e2e tests live in the Playwright folder.
+Tests sit next to source as `src/**/*.test.ts(x)`. Integration tests use `*.int.test.ts`; e2e tests will live in a Playwright folder (planned).
 
 ## Non-negotiable rules
 
@@ -125,6 +125,8 @@ The API uses the Fastify adapter. Do not use Express types (`Request`/`Response`
 - Keep changes scoped to the issue. Mention unrelated problems you notice instead of fixing them silently.
 - Do not add new dependencies without saying why and checking they are maintained.
 - When you are unsure about intended behaviour, ask rather than guess.
+- Ticket flow: spec (`SPEC.md`) → plan (`tasks/`) → build → review → PR. `/ship-issue N` runs it end to end ([skill](.claude/skills/ship-issue/SKILL.md)). The user reviews and merges every PR; agents never merge.
+- After a notable decision or correction, add an entry to [`docs/ai-workflow-log.md`](docs/ai-workflow-log.md), using the format at the top of that file.
 
 ## Commits
 
