@@ -8,16 +8,16 @@ Plan: [plan.md](plan.md) · Spec: [SPEC.md](../SPEC.md)
 
 **Acceptance criteria:**
 
-- [ ] `@hush/web` depends on `next`, `react` and `react-dom`, with `@types/react` and `@types/react-dom` as dev deps. Scripts match the spec (`dev`, `build`, `start`, `lint`, `typecheck: next typegen && tsc --noEmit`, `test`).
-- [ ] `src/app/layout.tsx` (`<html lang="en">`, metadata title "Hush") and `src/app/page.tsx` render "Hush" and "web: ok" from `status()`. `src/lib/status.ts` returns the `HealthStatus` type imported from `@hush/shared`.
-- [ ] `src/index.ts` and `src/index.test.ts` are removed, and the test now lives at `src/lib/status.test.ts`. `turbo.json` build outputs include `.next/**` and `!.next/cache/**`. `.gitignore` covers `next-env.d.ts`.
+- [x] `@hush/web` depends on `next`, `react` and `react-dom`, with `@types/react` and `@types/react-dom` as dev deps. Scripts match the spec (`dev`, `build`, `start`, `lint`, `typecheck: next typegen && tsc --noEmit`, `test`).
+- [x] `src/app/layout.tsx` (`<html lang="en">`, metadata title "Hush") and `src/app/page.tsx` render "Hush" and "web: ok" from `status()`. `src/lib/status.ts` returns the `HealthStatus` type imported from `@hush/shared`.
+- [x] `src/index.ts` and `src/index.test.ts` are removed, and the test now lives at `src/lib/status.test.ts`. `turbo.json` build outputs include `.next/**` and `!.next/cache/**`. `.gitignore` covers `next-env.d.ts`.
 
 **Verification:**
 
-- [ ] `rm -rf apps/web/.next apps/web/dist && pnpm build && pnpm typecheck && pnpm test` exits 0
-- [ ] A second `pnpm build` prints `FULL TURBO`
-- [ ] `pnpm --filter @hush/web exec tsc --showConfig | grep strict` shows `true`
-- [ ] Manual: `pnpm --filter @hush/web dev`, then open localhost:3000 and see "Hush" and "web: ok"
+- [x] `rm -rf apps/web/.next apps/web/dist && pnpm build && pnpm typecheck && pnpm test` exits 0
+- [x] A second `pnpm build` prints `FULL TURBO`
+- [x] `pnpm --filter @hush/web exec tsc --showConfig | grep strict` shows `true`
+- [x] Manual: `pnpm --filter @hush/web dev`, then open localhost:3000 and see "Hush" and "web: ok"
 
 **Dependencies:** None
 **Files:** `apps/web/{package.json,tsconfig.json,next.config.ts}`, `apps/web/src/app/{layout.tsx,page.tsx}`, `apps/web/src/lib/{status.ts,status.test.ts}`, `turbo.json`, `.gitignore`, `pnpm-lock.yaml`
@@ -25,8 +25,8 @@ Plan: [plan.md](plan.md) · Spec: [SPEC.md](../SPEC.md)
 
 ## Checkpoint A: Next runs on Node 26
 
-- [ ] Task 1 verification all green
-- [ ] If Next fails on Node 26, stop and ask (spec Open Question 1)
+- [x] Task 1 verification all green
+- [x] Next 16.4.6 builds, typechecks and serves on Node 26.13.1, so no need to stop
 
 ## Task 2: Tailwind 4 styles the placeholder
 

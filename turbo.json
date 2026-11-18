@@ -2,7 +2,7 @@
   "$schema": "https://turborepo.com/schema.json",
   "globalDependencies": ["tsconfig.base.json"],
   "tasks": {
-    "build": { "dependsOn": ["^build"], "outputs": ["dist/**"] },
+    "build": { "dependsOn": ["^build"], "outputs": ["dist/**", ".next/**", "!.next/cache/**"] },
     "typecheck": { "dependsOn": ["^build"] },
     "lint": { "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/eslint.config.js"] },
     "test": { "dependsOn": ["^build"] },

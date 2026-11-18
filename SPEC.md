@@ -26,13 +26,13 @@ Turn the `@hush/web` TypeScript stub into a real Next.js app, so later UI ticket
 
 ## Tech Stack
 
-| Concern  | Choice                                                                                       |
-| -------- | -------------------------------------------------------------------------------------------- |
-| Framework | `next@16.4.x`, `react@19.3.x`, `react-dom@19.3.x` (deps of `@hush/web`)                     |
-| Types    | `@types/react`, `@types/react-dom` (dev deps of `@hush/web`)                                 |
-| Styling  | `tailwindcss@4.3.x`, `@tailwindcss/postcss@4.3.x` (dev deps of `@hush/web`)                  |
-| Lint     | `@next/eslint-plugin-next@16.4.x` (root dev dep, applied to `apps/web/**` in the root config) |
-| Test     | Vitest (already at the root)                                                                 |
+| Concern   | Choice                                                                                        |
+| --------- | --------------------------------------------------------------------------------------------- |
+| Framework | `next@16.4.x`, `react@19.3.x`, `react-dom@19.3.x` (deps of `@hush/web`)                       |
+| Types     | `@types/react`, `@types/react-dom` (dev deps of `@hush/web`)                                  |
+| Styling   | `tailwindcss@4.3.x`, `@tailwindcss/postcss@4.3.x` (dev deps of `@hush/web`)                   |
+| Lint      | `@next/eslint-plugin-next@16.4.x` (root dev dep, applied to `apps/web/**` in the root config) |
+| Test      | Vitest (already at the root)                                                                  |
 
 Everything else stays on ticket #1's stack: Node 26, pnpm 12, Turbo 2, TS 6.0, ESLint 10 and Prettier.
 
@@ -147,5 +147,5 @@ import nextPlugin from '@next/eslint-plugin-next';
 
 ## Open Questions
 
-1. **Node 26 support:** Next 16.4's `engines` field is `>=20.9`, which allows Node 26, but I haven't checked that Next actually tests against Node 26. If `next build` fails on Node 26, do we pin Next to a patch that works, or file an upstream issue and wait?
+1. ~~**Node 26 support**~~ Resolved: Next 16.4.6 builds, typechecks and serves on Node 26.13.1 (Checkpoint A).
 2. **`next typegen` in typecheck:** Without it, a clean checkout fails `tsc` because `next-env.d.ts` references `.next/types`. The alternative is making `typecheck` depend on `build` in Turbo, which is slower. The plan is to use typegen.

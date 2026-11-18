@@ -33,13 +33,13 @@ Tasks 2 and 3 are independent of each other and can run in either order or in pa
 
 ### Phase 1: Risky foundation
 
-- [ ] Task 1: Next.js app boots, builds and renders shared status
+- [x] Task 1: Next.js app boots, builds and renders shared status
 
 ### Checkpoint A: Next runs on Node 26
 
-- [ ] `pnpm build && pnpm typecheck && pnpm test` pass from a clean state
-- [ ] `pnpm --filter @hush/web dev` serves "web: ok" at localhost:3000
-- [ ] Stop and resolve spec Open Question 1 if Next fails on Node 26
+- [x] `pnpm build && pnpm typecheck && pnpm test` pass from a clean state
+- [x] `pnpm --filter @hush/web dev` serves "web: ok" at localhost:3000
+- [x] Next works on Node 26, so spec Open Question 1 is resolved
 
 ### Phase 2: Styling and guardrails
 
@@ -57,14 +57,14 @@ Tasks 2 and 3 are independent of each other and can run in either order or in pa
 
 ## Risks and Mitigations
 
-| Risk                                                                    | Impact | Mitigation                                                                                                                           |
-| ----------------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------ |
-| Next 16.4 fails on Node 26                                              | High   | Task 1 runs first and Checkpoint A gates the rest. If it fails, stop and ask (spec Open Question 1).                                 |
-| Next rewrites `tsconfig.json` and drops inherited options               | Med    | After the first `next build`, diff the tsconfig and confirm `strict: true` with `tsc --showConfig`.                                  |
-| `noUncheckedIndexedAccess` or `verbatimModuleSyntax` clash with Next's generated types | Low | `skipLibCheck` is already on. Fix it in the web tsconfig only, and ask before touching `tsconfig.base.json`. |
-| Turbo caches `.next/cache` and the cache bloats                         | Low    | Use `outputs: [".next/**", "!.next/cache/**"]`.                                                                                     |
-| The root ESLint config can't resolve `@next/eslint-plugin-next`         | Low    | Install the plugin as a root dev dependency, next to the other ESLint packages.                                                     |
+| Risk                                                                                   | Impact | Mitigation                                                                                                   |
+| -------------------------------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------ |
+| Next 16.4 fails on Node 26                                                             | High   | Task 1 runs first and Checkpoint A gates the rest. If it fails, stop and ask (spec Open Question 1).         |
+| Next rewrites `tsconfig.json` and drops inherited options                              | Med    | After the first `next build`, diff the tsconfig and confirm `strict: true` with `tsc --showConfig`.          |
+| `noUncheckedIndexedAccess` or `verbatimModuleSyntax` clash with Next's generated types | Low    | `skipLibCheck` is already on. Fix it in the web tsconfig only, and ask before touching `tsconfig.base.json`. |
+| Turbo caches `.next/cache` and the cache bloats                                        | Low    | Use `outputs: [".next/**", "!.next/cache/**"]`.                                                              |
+| The root ESLint config can't resolve `@next/eslint-plugin-next`                        | Low    | Install the plugin as a root dev dependency, next to the other ESLint packages.                              |
 
 ## Open Questions
 
-- Spec Open Question 1 (Node 26): settled by Checkpoint A.
+- ~~Spec Open Question 1 (Node 26)~~ Resolved at Checkpoint A: Next 16.4.6 works on Node 26.13.1.
