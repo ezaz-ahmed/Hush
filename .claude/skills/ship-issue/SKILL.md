@@ -21,7 +21,9 @@ Pass `model` and `effort` on every Agent call. One subagent per plan task.
 
 ## Ask vs. proceed
 
-Only stop for the user when a subagent raises a real question (intended behaviour unclear, a CLAUDE.md non-negotiable would need breaking, a new dependency choice with trade-offs, an issue criterion that looks wrong). Use AskUserQuestion. Everything else: decide and keep going.
+**Plan gate for high-risk work:** if the spec or plan touches redaction, consent, audit, retention, guardrails or prompts (CLAUDE.md high-risk areas), show the user the plan after step 3 and wait for explicit approval before building.
+
+Otherwise, only stop for the user when a subagent raises a real question (intended behaviour unclear, a CLAUDE.md non-negotiable would need breaking, a new dependency choice with trade-offs, an issue criterion that looks wrong). Use AskUserQuestion. Everything else: decide and keep going.
 
 ## Pipeline
 
