@@ -1,5 +1,7 @@
 # Hush
 
+[![CI](https://github.com/ezaz-ahmed/Hush/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/ezaz-ahmed/Hush/actions/workflows/ci.yml)
+
 A TypeScript monorepo managed with pnpm workspaces and Turborepo.
 
 ## Prerequisites
