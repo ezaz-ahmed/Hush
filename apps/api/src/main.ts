@@ -1,9 +1,10 @@
 import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
+import { ConfigService } from '@nestjs/config';
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
 import { AppModule } from './app.module.js';
-
-const PORT = 5555; // shortcut: hardcoded, moves to ConfigService in the next task.
+import type { Env } from './config/env.js';
 
 const app = await NestFactory.create<NestFastifyApplication>(AppModule, new FastifyAdapter());
-await app.listen(PORT, 'localhost');
+const config = app.get<ConfigService<Env, true>>(ConfigService);
+await app.listen(config.get('PORT', { infer: true }), 'localhost');

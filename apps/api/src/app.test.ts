@@ -1,4 +1,5 @@
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
+import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { AppModule } from './app.module.js';
@@ -27,6 +28,10 @@ describe('app', () => {
   it('sends no CORS header, even to a foreign origin', async () => {
     const res = await inject('/health', { origin: 'http://evil.example' });
     expect(res.headers['access-control-allow-origin']).toBeUndefined();
+  });
+
+  it('injects ConfigService with the validated PORT', () => {
+    expect(app.get(ConfigService).get('PORT')).toBe(5555);
   });
 
   it('GET /nope returns 404', async () => {
