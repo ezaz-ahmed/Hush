@@ -43,7 +43,7 @@ Tasks 2 and 3 are independent of each other and can run in either order or in pa
 
 ### Phase 2: Styling and guardrails
 
-- [ ] Task 2: Tailwind 4 styles the placeholder
+- [x] Task 2: Tailwind 4 styles the placeholder
 - [ ] Task 3: Next ESLint rules apply to apps/web
 
 ### Phase 3: Wrap-up

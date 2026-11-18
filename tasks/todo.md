@@ -34,14 +34,14 @@ Plan: [plan.md](plan.md) · Spec: [SPEC.md](../SPEC.md)
 
 **Acceptance criteria:**
 
-- [ ] `tailwindcss` and `@tailwindcss/postcss` are dev deps of `@hush/web`. `postcss.config.mjs` loads `@tailwindcss/postcss`.
-- [ ] `src/app/globals.css` contains `@import 'tailwindcss';` and is imported by `layout.tsx`.
-- [ ] `apps/web` has no `tailwind.config.*`.
+- [x] `tailwindcss` and `@tailwindcss/postcss` are dev deps of `@hush/web`. `postcss.config.mjs` loads `@tailwindcss/postcss`.
+- [x] `src/app/globals.css` contains `@import 'tailwindcss';` and is imported by `layout.tsx`.
+- [x] `apps/web` has no `tailwind.config.*`.
 
 **Verification:**
 
-- [ ] `pnpm --filter @hush/web build` exits 0
-- [ ] Manual: in dev, the content is centered and the heading is visibly larger and semibold. DevTools shows Tailwind utility rules applied.
+- [x] `pnpm --filter @hush/web build` exits 0
+- [x] Manual: in dev, the content is centered and the heading is visibly larger and semibold. DevTools shows Tailwind utility rules applied.
 
 **Dependencies:** Task 1
 **Files:** `apps/web/package.json`, `apps/web/postcss.config.mjs`, `apps/web/src/app/{globals.css,layout.tsx,page.tsx}`
