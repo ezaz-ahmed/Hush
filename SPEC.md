@@ -74,7 +74,7 @@ pnpm lint && pnpm typecheck && pnpm test && pnpm build
 
 ## Testing strategy
 
-This ticket only changes configuration, so there are no Vitest tests. Each rule is proven by hand with a throwaway change that `pnpm lint` has to reject. Those checks are listed under Success criteria, and the edits are reverted afterwards.
+One guard test, `packages/shared/src/lint-guard.test.ts`, uses ESLint's Node API to assert the `import-x` rules stay at `error` in every workspace and that `no-default-export` stays scoped to `packages/shared`. Turbo's `test` task also re-runs when the root `eslint.config.js` changes. Each rule was also proven by hand with a throwaway change that `pnpm lint` has to reject. Those checks are listed under Success criteria, and the edits are reverted afterwards.
 
 ## Boundaries
 
