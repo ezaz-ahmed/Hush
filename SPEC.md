@@ -36,7 +36,7 @@ Existing: TypeScript 6.0, ESLint 10.15 (flat config, `defineConfig`), typescript
 One added block in the root `eslint.config.js`, plus one block scoped to `packages/shared`. No per-workspace config.
 
 ```js
-import importX from 'eslint-plugin-import-x';
+import { importX } from 'eslint-plugin-import-x';
 
 // after tseslint.configs.recommended
 {
@@ -92,4 +92,4 @@ This ticket only changes configuration, so there are no Vitest tests. Each rule 
 
 ## Open questions
 
-- `pnpm format:check` currently fails on the untracked `.claude/skills/ship-issue/SKILL.md`, which is a local file and not part of this ticket. Should `.claude/` go into `.prettierignore`, or will that skill be committed and formatted?
+- RESOLVED: `pnpm format:check` currently fails on the untracked `.claude/skills/ship-issue/SKILL.md`, which is a local file and not part of this ticket. Should `.claude/` go into `.prettierignore`, or will that skill be committed and formatted? (Resolved: the file is now formatted and committed.)
