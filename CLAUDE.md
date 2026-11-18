@@ -141,5 +141,6 @@ pnpm build
 ```
 
 - Only commit when all of them pass. If any step fails, fix it and rerun the full sequence. Never use `--no-verify` or skip a step.
+- A pre-commit hook (husky + lint-staged) runs ESLint `--fix` and Prettier on staged files, so the commit can differ from what you staged; check `git show HEAD` after committing.
 - After a successful commit, push the branch.
 - **No attribution.** No `Co-Authored-By` trailers, "Generated with Claude Code" lines, or any other AI attribution in commit messages or PR descriptions. The message is only the change description.

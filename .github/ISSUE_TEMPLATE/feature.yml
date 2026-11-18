@@ -1,0 +1,43 @@
+name: Feature
+description: Propose a new feature or enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Do not paste patient data, real names, contact details or any other PII. Use made-up examples.**
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / goal
+      description: What problem does this solve, or what should it achieve?
+    validations:
+      required: true
+  - type: textarea
+    id: behaviour
+    attributes:
+      label: Proposed behaviour
+      description: What should the system do?
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      value: '- [ ] '
+    validations:
+      required: true
+  - type: dropdown
+    id: privacy
+    attributes:
+      label: Privacy and safety impact
+      description: High-risk areas are redaction, consent, audit, retention, guardrails and prompts.
+      options:
+        - None
+        - Touches a high-risk area
+    validations:
+      required: true
+  - type: textarea
+    id: privacy-details
+    attributes:
+      label: Privacy and safety details
+      description: If this touches a high-risk area, explain how.

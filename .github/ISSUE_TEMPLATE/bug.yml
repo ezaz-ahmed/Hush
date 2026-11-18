@@ -1,0 +1,45 @@
+name: Bug
+description: Report something that is broken
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Do not paste patient data, real names, contact details or any other PII. Use made-up examples.** This includes chat transcripts and logs.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      value: |
+        1.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - web
+        - api
+        - shared
+        - CI/tooling
+        - other
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Redact first. Do not paste patient data, real names, contact details or any other PII.
+      render: text
