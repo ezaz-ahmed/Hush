@@ -1,4 +1,5 @@
 import 'reflect-metadata';
+import { Logger } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
 import { Pool } from 'pg';
@@ -29,5 +30,19 @@ describe('DatabaseModule', () => {
     await moduleRef.close();
 
     expect(end).toHaveBeenCalledTimes(1);
+  });
+
+  it('logs only the code when an idle client errors, without crashing', async () => {
+    const moduleRef = await compile();
+    const log = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+    const err = Object.assign(new Error('secret-host.neon.tech gone'), { code: '57P01' });
+
+    expect(() => moduleRef.get<Db>(DB).$client.emit('error', err)).not.toThrow();
+    expect(log).toHaveBeenCalledTimes(1);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('57P01'));
+    expect(log).not.toHaveBeenCalledWith(expect.stringContaining('secret-host'));
+
+    log.mockRestore();
+    await moduleRef.close();
   });
 });
