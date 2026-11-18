@@ -42,7 +42,7 @@ pnpm --filter @hush/api exec vitest run -t "test name"
 
 - `@hush/shared` is consumed via its **built `dist/`** (`exports` points there), not source. After editing it, rebuild (`pnpm --filter @hush/shared build`) or keep `pnpm dev` running, or the apps see stale types and code. Turbo's `^build` handles this for `build`/`typecheck`/`test`/`dev`.
 - `apps/web` typecheck runs `next typegen` first to generate `.next/types`; its tsconfig overrides the base to `moduleResolution: bundler`. Everything else uses `nodenext`, so relative imports there need `.js` extensions.
-- `apps/web` uses Next 16, which differs from older Next. See [apps/web/CLAUDE.md](apps/web/CLAUDE.md): read the docs in `apps/web/node_modules/next/dist/docs/` before writing Next code. `next dev` regenerates that file, so don't remove it.
+- `apps/web` uses Next 16, which differs from older Next. See [apps/web/AGENTS.md](apps/web/AGENTS.md): read the docs in `apps/web/node_modules/next/dist/docs/` before writing Next code. `next dev` regenerates that file, so don't remove or rename it.
 
 **Before saying a task is done, run `pnpm lint && pnpm typecheck && pnpm test` and report the result.** If something fails, fix it or say clearly what is still failing. Never claim tests pass without running them.
 
@@ -120,7 +120,6 @@ The API uses the Fastify adapter. Do not use Express types (`Request`/`Response`
 - Keep changes scoped to the issue. Mention unrelated problems you notice instead of fixing them silently.
 - Do not add new dependencies without saying why and checking they are maintained.
 - When you are unsure about intended behaviour, ask rather than guess.
-- After notable decisions or corrections, add a short entry to `docs/ai-workflow-log.md` (what was asked, what changed, how it was verified).
 
 ## Commits
 
