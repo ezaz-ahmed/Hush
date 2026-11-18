@@ -3,3 +3,5 @@ dist
 .turbo
 .next
 *.tsbuildinfo
+.env*
+!.env.example
