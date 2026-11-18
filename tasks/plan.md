@@ -7,7 +7,7 @@ This plan scaffolds a pnpm and Turborepo monorepo with three TypeScript stub wor
 
 ## Dependency Graph
 ```
-root pins (package.json, workspace, .nvmrc, .npmrc)
+root pins (package.json, pnpm-workspace.yaml, .nvmrc)
    └── turbo.json + tsconfig.base.json
           └── @hush/shared (build → dist/*.d.ts)
                  ├── @hush/api  (imports shared)
@@ -26,7 +26,7 @@ root pins (package.json, workspace, .nvmrc, .npmrc)
 
 ## Task List
 ### Phase 1: Foundation
-- [ ] Task 1: Root workspace and Node/pnpm pins
+- [x] Task 1: Root workspace and Node/pnpm pins
 - [ ] Task 2: `@hush/shared` built and tested through Turbo
 
 ### Checkpoint A
@@ -49,7 +49,7 @@ root pins (package.json, workspace, .nvmrc, .npmrc)
 ## Risks and Mitigations
 | Risk | Impact | Mitigation |
 |---|---|---|
-| pnpm 12 changed workspace or `engine-strict` behaviour compared to pnpm 9/10 | Med | Task 1 checks the Node 24 rejection explicitly. If `engine-strict` is ignored, use pnpm's own setting (`engineStrict` in `pnpm-workspace.yaml`). |
+| pnpm 12 changed workspace or `engine-strict` behaviour compared to pnpm 9/10 | Med | **Hit and resolved in Task 1:** `.npmrc` was ignored, so `engineStrict: true` moved to `pnpm-workspace.yaml`. |
 | The `tsx watch` dev stub can't resolve `@hush/shared` before shared has been built | Low | `dev` dependsOn `^build` |
 | ESLint's typed linting slows things down or needs per-package `tsconfig` wiring | Low | Start with non-type-aware `recommended` rules and add typed rules later if wanted |
 | NestJS later needs CJS output from shared | Med (later) | Out of scope for now. This is open question 1 in SPEC.md. |

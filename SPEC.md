@@ -25,9 +25,9 @@ Set up Hush as a TypeScript monorepo so that web, API and shared code live in on
 | Concern | Choice |
 |---|---|
 | Runtime | Node 26 LTS (`.nvmrc`: `26`, `engines.node`: `">=26 <27"`) |
-| Package manager | pnpm 12 workspaces with `engine-strict=true` in `.npmrc` |
+| Package manager | pnpm 12 workspaces with `engineStrict: true` in `pnpm-workspace.yaml` (pnpm 12 ignores `engine-strict` in `.npmrc`) |
 | Task runner | Turborepo 2 (`turbo.json` with the `tasks` key) |
-| Language | TypeScript 5, `strict`, ESM (`"type": "module"`) |
+| Language | TypeScript 7 (current release; native compiler), `strict`, ESM (`"type": "module"`) |
 | Lint / format | ESLint 9 flat config + `typescript-eslint` + Prettier |
 | Test | Vitest |
 | Stub dev runner | `tsx watch` (it gets replaced once the frameworks land) |
@@ -56,9 +56,8 @@ pnpm --filter @hush/web dev
 ## Project Structure
 ```
 .nvmrc                 → "26"
-.npmrc                 → engine-strict=true
 package.json           → root scripts, engines, packageManager, shared devDeps
-pnpm-workspace.yaml    → apps/*, packages/*
+pnpm-workspace.yaml    → apps/*, packages/*, engineStrict, allowBuilds (esbuild)
 turbo.json             → task graph
 tsconfig.base.json     → strict compiler options every package extends
 eslint.config.js       → single flat config for the whole repo
@@ -116,7 +115,7 @@ console.log(health('api'));
 
 ## Success Criteria
 1. On a clean clone with Node 26, `pnpm install` succeeds and creates a single `pnpm-lock.yaml`.
-2. On Node 24, `pnpm install` fails because of the `engines` check and `engine-strict`.
+2. On Node 24, `pnpm install` fails because of the `engines` check and `engineStrict`.
 3. `pnpm build`, `pnpm lint`, `pnpm typecheck` and `pnpm test` each exit 0 across all three workspaces.
 4. A second `pnpm build` with no changes reports `FULL TURBO`, meaning every task was a cache hit.
 5. `pnpm build` builds `@hush/shared` before both apps.

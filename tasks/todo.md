@@ -6,16 +6,16 @@ Plan: [plan.md](plan.md) · Spec: [SPEC.md](../SPEC.md)
 **Description:** Create the root of the monorepo: the workspace definition, the Node and pnpm version pins, and the root dev dependencies and scripts.
 
 **Acceptance criteria:**
-- [ ] `pnpm-workspace.yaml` lists `apps/*` and `packages/*`
-- [ ] Root `package.json` is `private`, with `engines.node: ">=26 <27"`, `packageManager: "pnpm@12.21.0"`, root scripts `dev/build/lint/typecheck/test` that call `turbo run <task>`, and the shared dev deps
-- [ ] `.nvmrc` = `26`, `.npmrc` = `engine-strict=true`, and `.gitignore` covers `node_modules`, `dist`, `.turbo`, `.next` and `*.tsbuildinfo`
+- [x] `pnpm-workspace.yaml` lists `apps/*` and `packages/*`
+- [x] Root `package.json` is `private`, with `engines.node: ">=26 <27"`, `packageManager: "pnpm@12.21.0"`, root scripts `dev/build/lint/typecheck/test` that call `turbo run <task>`, and the shared dev deps
+- [x] `.nvmrc` = `26`, `engineStrict: true` in `pnpm-workspace.yaml` (pnpm 12 ignores `.npmrc` for this), and `.gitignore` covers `node_modules`, `dist`, `.turbo`, `.next` and `*.tsbuildinfo`
 
 **Verification:**
-- [ ] On Node 26, `pnpm install` succeeds and creates `pnpm-lock.yaml`
-- [ ] On Node 24, `pnpm install` fails with an engine error
+- [x] On Node 26, `pnpm install` succeeds and creates `pnpm-lock.yaml`
+- [x] On Node 24, `pnpm install` fails with an engine error (verified with real pnpm under Node 24: `ERR_PNPM_UNSUPPORTED_ENGINE`)
 
 **Dependencies:** None
-**Files:** `package.json`, `pnpm-workspace.yaml`, `.nvmrc`, `.npmrc`, `.gitignore`
+**Files:** `package.json`, `pnpm-workspace.yaml`, `.nvmrc`, `.gitignore`, `pnpm-lock.yaml`
 **Scope:** M
 
 ## Task 2: `@hush/shared` built and tested through Turbo
