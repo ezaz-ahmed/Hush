@@ -18,7 +18,8 @@
     "start": "node dist/main.js",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --dir src"
+    "test": "vitest run --dir src",
+    "test:coverage": "vitest run --dir src --coverage"
   },
   "devDependencies": {
     "@nestjs/testing": "12.5.1",

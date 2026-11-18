@@ -33,6 +33,7 @@ pnpm build               # build in dependency order
 pnpm lint                # ESLint everywhere
 pnpm typecheck           # tsc --noEmit everywhere
 pnpm test                # Vitest once everywhere
+pnpm test:coverage       # Vitest with v8 coverage, reports in <workspace>/coverage/
 pnpm format              # Prettier write (format:check for CI)
 pnpm turbo run test --filter=@hush/api...   # one workspace + its deps
 

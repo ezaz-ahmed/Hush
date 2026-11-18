@@ -13,7 +13,8 @@
     "build": "tsc -p tsconfig.build.json",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --dir src"
+    "test": "vitest run --dir src",
+    "test:coverage": "vitest run --dir src --coverage"
   },
   "dependencies": {
     "zod": "4.6.7"

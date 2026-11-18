@@ -6,7 +6,7 @@ import { importX } from 'eslint-plugin-import-x';
 import tseslint from 'typescript-eslint';
 
 export default defineConfig(
-  { ignores: ['**/dist', '**/.turbo', '**/.next', '**/next-env.d.ts'] },
+  { ignores: ['**/dist', '**/.turbo', '**/.next', '**/coverage', '**/next-env.d.ts'] },
   js.configs.recommended,
   tseslint.configs.recommended,
   {

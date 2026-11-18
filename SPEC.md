@@ -1,95 +1,120 @@
-# Spec: TypeScript strict, ESLint and Prettier across the monorepo
+# Spec: Vitest setup for unit tests
 
 ## Objective
 
-Close the one gap left in the repo's lint and format setup: import rules. Tickets #1–#4 already built most of what issue #5 asks for. Ticket #4 is merged, and its spec is archived at [docs/specs/4-shared-package-for-types-and-zod-schemas.md](docs/specs/4-shared-package-for-types-and-zod-schemas.md).
+Close the one gap left in the unit test setup: coverage reporting. Tickets #1–#5 already built most of what issue #7 asks for. Ticket #5 is merged, and its spec is archived at [docs/specs/5-typescript-strict-eslint-and-prettier-across-the-monorepo.md](docs/specs/5-typescript-strict-eslint-and-prettier-across-the-monorepo.md).
 
-**Acceptance criteria (from issue #5):**
+**Acceptance criteria (from issue #7):**
 
-- [x] Shared `tsconfig` base with `strict: true`, `noUncheckedIndexedAccess`. **Already done:** `tsconfig.base.json` (#1). All three workspaces extend it, and `apps/web` overrides only module resolution and JSX.
-- [ ] Shared ESLint config (typescript-eslint, ~~import rules~~). **typescript-eslint is already done:** the root `eslint.config.js` applies `tseslint.configs.recommended` to every workspace (#1). **Import rules are the gap**, and this ticket adds them.
-- [x] Prettier config and format script. **Already done:** `.prettierrc`, `.prettierignore`, and the `format` / `format:check` scripts in the root `package.json` (#1).
-- [ ] Zero lint errors on main. `pnpm lint` passes today and must still pass with the new rules.
+- [x] Vitest configured for `apps/api`, `apps/web`, `packages/shared`. **Already done:** `vitest` 5.1.0 is a root dev dependency, and each workspace has `"test": "vitest run --dir src"`. `apps/api` has a `vitest.config.ts` (SWC plugin for decorator metadata, `reflect-metadata` setup file) from #3. `apps/web` and `packages/shared` run on Vitest's defaults, which is all they need.
+- [ ] Coverage reporting (v8). **This is the gap.** No coverage provider is installed and no coverage script exists.
+- [x] Example test in each package. **Already done:** `apps/api/src/app.test.ts` (#3), `apps/web/src/app/page.test.tsx` and `apps/web/src/lib/status.test.ts` (#2), `packages/shared/src/schemas/health.test.ts` (#4), plus others.
+- [x] `pnpm test` runs all unit tests via Turborepo. **Already done:** the root `test` script is `turbo run test`, and `turbo.json` has a `test` task with `dependsOn: ["^build"]`. Today it runs 3 workspaces' tests and passes.
 
 The PR description lists which criteria earlier tickets already met, so the reviewer doesn't look for changes that aren't there.
 
 **Out of scope:**
 
-- CI enforcement of lint and format. That is #9 (Basic GitHub Actions CI).
-- Type-aware linting (`recommendedTypeChecked`). It needs `parserOptions.project` for every workspace, including Next's generated types, and it slows lint down. It deserves its own ticket if we want it.
-- `@typescript-eslint/consistent-type-imports`. `verbatimModuleSyntax` already makes tsc enforce type-only imports, and the rule's autofix would turn Nest DI constructor imports into `import type`, which breaks injection (see the #3 spec).
-- `import-x/no-unresolved`, `named`, `no-cycle` and the other rules that need a resolver. `tsc` already reports unresolved imports, and these rules need `eslint-import-resolver-typescript` as a second dependency.
-- Linting the root `eslint.config.js`. No workspace's `eslint .` covers it today.
+- Integration tests (Testcontainers, `*.int.test.ts`) and e2e tests (Playwright). They get their own tickets.
+- CI. No `.github/workflows` exists yet; that is #9 (Basic GitHub Actions CI).
+- Coverage thresholds. Nothing fails on a low number; this ticket only reports.
+- Reporting untested source files (`coverage.include`). Vitest 5 reports only files the tests load. Listing every file under `src/` needs a per-workspace glob that must skip CSS and Next's generated files. Worth it once there is real product code to measure.
+- A DOM test environment (`jsdom` / `happy-dom`) and `@testing-library/react` for `apps/web`. The existing page test renders the Server Component with `react-dom/server` in the `node` environment, which meets "example test". Add them when a ticket needs client-side interaction tests.
+- A root `vitest.workspace` / `projects` config. Turbo already runs each workspace's tests and caches them per workspace.
 
 ## Tech stack
 
-Existing: TypeScript 6.0, ESLint 10.15 (flat config, `defineConfig`), typescript-eslint 8.73, Prettier 3.10.
+Existing: Vitest 5.1.0 (root dev dependency), Turborepo 2.11, Node 26, pnpm 12.
 
-**New dev dependency (root):** `eslint-plugin-import-x` `4.18.1`, pinned.
+**New dev dependency (root):** `@vitest/coverage-v8` `5.1.0`, pinned.
 
-- **Why:** the issue asks for import rules, and typescript-eslint has none for import hygiene (duplicates, order, default exports).
-- **Why not `eslint-plugin-import`:** its 2.32.0 release supports ESLint only up to `^9`, and we run ESLint 10.
-- **Maintained:** last published 2026-11-09 (un-ts/eslint-plugin-import-x). Its peer range `eslint: ^8.57 || ^9 || ^10` covers 10.15, and it ships flat configs. Its other peers (`@typescript-eslint/utils`, `eslint-import-resolver-node`) are optional.
+- **Why:** the issue asks for v8 coverage, and Vitest loads its coverage provider from this separate package. `v8` is already Vitest's default provider, so no config is needed beyond installing it.
+- **Version:** its peer dependency is `vitest: 5.1.0` exactly, so it must match the installed Vitest. Bump both together.
+- **Maintained:** published by the Vitest team (vitest-dev/vitest monorepo), same release as the installed Vitest.
+- **Placement:** root, next to `vitest`, so all three workspaces resolve it the same way they resolve `vitest`.
+
+No other new dependencies.
 
 ## Design
 
-One added block in the root `eslint.config.js`, plus one block scoped to `packages/shared`. No per-workspace config.
+1. **One script per workspace.** Each of `apps/api`, `apps/web`, `packages/shared` gets:
 
-```js
-import { importX } from 'eslint-plugin-import-x';
+   ```json
+   "test:coverage": "vitest run --dir src --coverage"
+   ```
 
-// after tseslint.configs.recommended
-{
-  plugins: { 'import-x': importX },
-  rules: {
-    'import-x/first': 'error',
-    'import-x/newline-after-import': 'error',
-    'import-x/no-duplicates': 'error',
-    'import-x/order': 'error', // default groups: builtin, external, parent, sibling, index
-  },
-},
-{
-  // #1 convention: named exports only in shared
-  files: ['packages/shared/src/**/*.ts'],
-  rules: { 'import-x/no-default-export': 'error' },
-},
-```
+   Vitest's defaults then apply: provider `v8`, reporters `text` (terminal table), `html`, `clover`, `json`, written to `<workspace>/coverage/`. Test files are excluded from the report by default.
 
-Decisions:
+2. **Root script:** `"test:coverage": "turbo run test:coverage"`.
 
-1. **Only rules that work without a resolver.** These four rules work on the import statements themselves, so we don't need a TypeScript resolver dependency. tsc already catches broken paths.
-2. **`import-x/order` with default options.** The existing files already follow its default grouping (packages first, then relative imports, with no blank lines between them), so turning it on shouldn't change any file. We don't sort alphabetically, because that would rewrite most import blocks and gain little.
-3. **`no-default-export` only in `packages/shared/src`.** This turns the #1 "named exports only in shared" convention into a lint rule. Next pages, layouts and config files need default exports, so the rule stays out of the apps.
-4. **Every rule is `error`, not `warn`.** That matches how the repo treats `no-img-element`: a warning wouldn't block CI.
-5. **Turbo cache.** The lint task already lists `$TURBO_ROOT$/eslint.config.js` as an input. A new dependency changes `pnpm-lock.yaml`, which Turbo hashes anyway, so `turbo.json` stays as it is.
+3. **Turbo task** in the root `turbo.json`, same deps and inputs as `test`, plus outputs so cache hits restore the report:
+
+   ```json
+   "test:coverage": {
+     "dependsOn": ["^build"],
+     "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/eslint.config.js"],
+     "outputs": ["coverage/**"]
+   }
+   ```
+
+   The `eslint.config.js` input is there because `packages/shared/src/lint-guard.test.ts` reads it, same as the `test` task.
+
+4. **Keep `coverage/` out of other tools.**
+   - `.gitignore` already has `coverage`. No change.
+   - Prettier 3 skips `.gitignore`d files by default. No `.prettierignore` change.
+   - **ESLint does not read `.gitignore`.** The HTML reporter writes `.js` files (`prettify.js`, `sorter.js`, `block-navigation.js`) into `coverage/`, and each workspace's `eslint .` would lint them and fail. Add `'**/coverage'` to the `ignores` entry in the root `eslint.config.js`.
+   - `tsc` only includes `src`, so it never sees `coverage/`.
+
+5. **Docs.** Add `pnpm test:coverage` to the Commands block in `CLAUDE.md`.
+
+`pnpm test` stays as it is: no coverage, so the everyday loop stays fast.
 
 ## Commands
 
 ```bash
-pnpm add -Dw eslint-plugin-import-x@4.18.1
-pnpm lint
+pnpm add -Dw @vitest/coverage-v8@5.1.0
+pnpm test:coverage                                   # all workspaces, via Turbo
+pnpm --filter @hush/api test:coverage                # one workspace
 pnpm format && pnpm format:check
 pnpm lint && pnpm typecheck && pnpm test && pnpm build
 ```
 
+## Project structure
+
+```
+package.json             + test:coverage script, + @vitest/coverage-v8
+turbo.json               + test:coverage task
+eslint.config.js         + '**/coverage' ignore
+apps/api/package.json    + test:coverage script
+apps/web/package.json    + test:coverage script
+packages/shared/package.json  + test:coverage script
+CLAUDE.md                + one line under Commands
+<workspace>/coverage/    generated, gitignored
+```
+
+## Code style
+
+No new source code. Scripts and config follow the existing shape of the `test` script and task.
+
 ## Testing strategy
 
-One guard test, `packages/shared/src/lint-guard.test.ts`, uses ESLint's Node API to assert the `import-x` rules stay at `error` in every workspace and that `no-default-export` stays scoped to `packages/shared`. Turbo's `test` task also re-runs when the root `eslint.config.js` changes. Each rule was also proven by hand with a throwaway change that `pnpm lint` has to reject. Those checks are listed under Success criteria, and the edits are reverted afterwards.
+No new tests: this ticket adds tooling, not logic. The existing 3-workspace suite is the check that Vitest still works. Coverage is verified by running it (see Success criteria). The ESLint ignore is verified by running `pnpm lint` after a coverage run, with `coverage/` present.
 
 ## Boundaries
 
-- **Always:** pin the new dependency's version; run the full CLAUDE.md commit sequence before committing; keep a single root ESLint config.
-- **Ask first:** adding any other ESLint plugin or resolver; enabling type-aware linting; changing `.prettierrc` style options.
-- **Never:** set a rule to `warn` or add `eslint-disable` comments to get to green; turn off `strict` or `noUncheckedIndexedAccess`; reformat files the new rules don't touch.
+- **Always:** pin `@vitest/coverage-v8` to the exact installed Vitest version; run the full CLAUDE.md commit sequence before committing.
+- **Ask first:** adding a DOM environment or Testing Library; adding coverage thresholds; adding any other dependency.
+- **Never:** commit `coverage/`; skip or weaken an existing test; change `pnpm test` to collect coverage.
 
 ## Success criteria
 
-1. `pnpm lint` exits 0 across all three workspaces, with no warnings.
-2. Adding a second `import { z } from 'zod';` line to `packages/shared/src/schemas/health.ts` makes `pnpm lint` fail with `import-x/no-duplicates`.
-3. Adding `export default 1;` to a file in `packages/shared/src` makes `pnpm lint` fail with `import-x/no-default-export`, and `apps/web/src/app/page.tsx` still passes lint.
-4. Moving a relative import above a package import in an `apps/api` file makes `pnpm lint` fail with `import-x/order`.
-5. `pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build` all pass from the root.
+1. `pnpm test:coverage` exits 0 from the root, runs all three workspaces through Turbo, and prints a v8 coverage table for each.
+2. `apps/api/coverage/index.html`, `apps/web/coverage/index.html` and `packages/shared/coverage/index.html` exist afterwards.
+3. A second `pnpm test:coverage` with no changes is a full Turbo cache hit and the `coverage/` folders are still present.
+4. With the `coverage/` folders present, `pnpm lint` and `pnpm format:check` both exit 0.
+5. `git status` shows no files under `coverage/`.
+6. `pnpm lint && pnpm typecheck && pnpm test && pnpm build` all pass from the root.
 
 ## Open questions
 
-- RESOLVED: `pnpm format:check` currently fails on the untracked `.claude/skills/ship-issue/SKILL.md`, which is a local file and not part of this ticket. Should `.claude/` go into `.prettierignore`, or will that skill be committed and formatted? (Resolved: the file is now formatted and committed.)
+None.
