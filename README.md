@@ -48,10 +48,26 @@ packages/shared  @hush/shared  shared types and utilities, built to dist/
 
 ## API
 
-`GET /health` returns `{ "ok": true, "service": "api" }`. Env vars are documented in `apps/api/.env.example` and `apps/web/.env.example`. Both apps fail fast at startup with `Invalid env: <NAME>` on invalid values (API: `PORT`, default `5555`; web: `API_URL`, checked when `next.config` loads). CORS is off.
+`GET /health` returns `{ "ok": true, "service": "api" }`. Env vars are documented in `apps/api/.env.example` and `apps/web/.env.example`. Both apps fail fast at startup with `Invalid env: <NAME>` on invalid values (API: `PORT`, default `5555`, plus optional `DATABASE_URL` and `DATABASE_URL_UNPOOLED` Neon strings that must be `postgres://` or `postgresql://` when set; web: `API_URL`, checked when `next.config` loads). CORS is off.
 
 The browser never calls the API directly. The web app proxies `/api/*` to it, so `http://localhost:3000/api/health` reaches `http://localhost:5555/health`. The proxy target is `API_URL` (default `http://localhost:5555`). Next bakes rewrites into the build, so `API_URL` must be set when running `next build`, not only at start.
 
 Apps depend on shared with `"@hush/shared": "workspace:*"`. Tests sit next to the source as `src/**/*.test.ts`.
+
+## Database (Neon)
+
+Hosted Postgres with pgvector on Neon. Nothing reads it yet; Drizzle arrives in #12.
+
+- **`main`** is the production-like branch. Production hardening is tracked in #82.
+- **`dev`** is branched from `main` for local development. Your `apps/api/.env` points at it.
+- Integration tests use Testcontainers (`pgvector/pgvector`), never Neon. Seed scripts must refuse to run against `main`.
+
+One-time setup, done by hand in the Neon console:
+
+1. Create a Neon project (Postgres 17+, region nearest you). Its default branch is `main`.
+2. Create a branch `dev` from `main`.
+3. In the SQL editor, on each branch, run `CREATE EXTENSION IF NOT EXISTS vector;`. Check with `SELECT extversion FROM pg_extension WHERE extname = 'vector';`.
+   A branch created after the extension is enabled on `main` inherits it; keep the statement on each branch anyway.
+4. From Connect on the `dev` branch, copy the pooled string into `DATABASE_URL` and the direct string into `DATABASE_URL_UNPOOLED` in `apps/api/.env`.
 
 See [SPEC.md](SPEC.md) for the project's conventions and boundaries.

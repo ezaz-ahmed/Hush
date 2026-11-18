@@ -13,6 +13,13 @@ Format:
 - **Source:** commit sha(s) and/or PR number
 ```
 
+## 2026-11-19: Neon set up by hand; database URLs optional until #12 (#11)
+
+- **Context:** Issue #11 asks for a Neon project with `main` and `dev` branches and pgvector enabled. Agents have no Neon credentials, and creating cloud resources is the user's call.
+- **Decision:** The user creates the project and branches in the Neon console and enables pgvector on each. The code adds `DATABASE_URL` (pooled) and `DATABASE_URL_UNPOOLED` (direct) to the API env schema as **optional**: nothing reads them yet, and requiring them would break `pnpm dev`, `app.test.ts` and secret-free CI. #12 (Drizzle) makes them required, and a `shortcut:` comment in `env.ts` says so. Review then tightened validation from scheme-only to scheme plus a valid hostname, which also rejects IPv6 literal hosts.
+- **Verified by:** `apps/api/src/config/env.test.ts`, written first (accept/reject cases, exact `Invalid env: <NAME>` message, no value leak); full gate passing; code, security and test reviews all GO.
+- **Source:** `docs/specs/11-create-neon-project-and-enable-pgvector.md` (after retirement), PR for #11
+
 ## 2026-11-18: No `consistent-type-imports` lint rule (#5)
 
 - **Context:** The ESLint setup for the monorepo was being scoped, and `@typescript-eslint/consistent-type-imports` was a candidate rule.
