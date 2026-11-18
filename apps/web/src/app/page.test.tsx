@@ -6,20 +6,20 @@ import HomePage from './page';
 vi.mock('../lib/status', () => ({ status: vi.fn() }));
 
 describe('HomePage', () => {
-  it('shows the service as ok when healthy', () => {
-    vi.mocked(status).mockReturnValue({ ok: true, service: 'web' });
+  it('shows the API as ok when healthy', async () => {
+    vi.mocked(status).mockResolvedValue({ ok: true, service: 'api' });
 
-    const html = renderToStaticMarkup(<HomePage />);
+    const html = renderToStaticMarkup(await HomePage());
 
     expect(html).toContain('>Hush</h1>');
-    expect(html).toContain('>web: ok</p>');
+    expect(html).toContain('>api: ok</p>');
   });
 
-  it('shows the service as down when unhealthy', () => {
-    vi.mocked(status).mockReturnValue({ ok: false, service: 'web' });
+  it('shows the API as down when unhealthy', async () => {
+    vi.mocked(status).mockResolvedValue({ ok: false, service: 'api' });
 
-    const html = renderToStaticMarkup(<HomePage />);
+    const html = renderToStaticMarkup(await HomePage());
 
-    expect(html).toContain('>web: down</p>');
+    expect(html).toContain('>api: down</p>');
   });
 });
