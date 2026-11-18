@@ -3,6 +3,7 @@ import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fa
 import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { healthStatusSchema } from '@hush/shared';
 import { z } from 'zod';
 import { AppModule } from './app.module.js';
 import { validateEnv } from './config/env.js';
@@ -42,7 +43,7 @@ describe('app', () => {
   it('GET /health returns ok for the api', async () => {
     const res = await inject('/health');
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ ok: true, service: 'api' });
+    expect(healthStatusSchema.parse(res.json())).toEqual({ ok: true, service: 'api' });
   });
 
   it('injects ConfigService with the validated PORT', () => {
