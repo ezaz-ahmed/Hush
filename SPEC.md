@@ -1,44 +1,95 @@
-# Spec: Shared package for types and zod schemas (`packages/shared`)
+# Spec: TypeScript strict, ESLint and Prettier across the monorepo
 
 ## Objective
 
-Make `@hush/shared` the one place where API contracts live, as zod schemas with types inferred from them, and prove that both apps use them. This sets the pattern for later tickets. It does not try to predict their contracts. Ticket #3 (the API scaffold) is merged, and its spec is archived at [docs/specs/3-scaffold-nestjs-api.md](docs/specs/3-scaffold-nestjs-api.md).
+Close the one gap left in the repo's lint and format setup: import rules. Tickets #1–#4 already built most of what issue #5 asks for. Ticket #4 is merged, and its spec is archived at [docs/specs/4-shared-package-for-types-and-zod-schemas.md](docs/specs/4-shared-package-for-types-and-zod-schemas.md).
 
-**Acceptance criteria (from issue #4, two of them amended):**
+**Acceptance criteria (from issue #5):**
 
-- [x] `packages/shared` exports the API request/response types ~~for the API~~ **that exist today**: the health response and the validation-error body
-- [x] zod schemas reused by API validation and ~~web forms~~ **the web's parsing of API responses**. Forms don't exist yet.
-- [x] Builds cleanly in the Turborepo pipeline
+- [x] Shared `tsconfig` base with `strict: true`, `noUncheckedIndexedAccess`. **Already done:** `tsconfig.base.json` (#1). All three workspaces extend it, and `apps/web` overrides only module resolution and JSX.
+- [ ] Shared ESLint config (typescript-eslint, ~~import rules~~). **typescript-eslint is already done:** the root `eslint.config.js` applies `tseslint.configs.recommended` to every workspace (#1). **Import rules are the gap**, and this ticket adds them.
+- [x] Prettier config and format script. **Already done:** `.prettierrc`, `.prettierignore`, and the `format` / `format:check` scripts in the root `package.json` (#1).
+- [ ] Zero lint errors on main. `pnpm lint` passes today and must still pass with the new rules.
 
-The issue stays as written. The PR description explains the amendments:
+The PR description lists which criteria earlier tickets already met, so the reviewer doesn't look for changes that aren't there.
 
-- **Only real contracts.** The chat (#28), consent (#41), citation (#29) and data endpoint (#47) schemas are written in those tickets, against the design each one settles. Guessing them now would mean rewriting them later.
-- **No forms yet.** The first form arrives with the consent screen (#34) or the chat input (#32). The web reuses the shared schemas today by parsing the API's health response with one.
+**Out of scope:**
 
-**Out of scope:** schemas for future endpoints, web env validation (#6), and any UI beyond the existing status line.
+- CI enforcement of lint and format. That is #9 (Basic GitHub Actions CI).
+- Type-aware linting (`recommendedTypeChecked`). It needs `parserOptions.project` for every workspace, including Next's generated types, and it slows lint down. It deserves its own ticket if we want it.
+- `@typescript-eslint/consistent-type-imports`. `verbatimModuleSyntax` already makes tsc enforce type-only imports, and the rule's autofix would turn Nest DI constructor imports into `import type`, which breaks injection (see the #3 spec).
+- `import-x/no-unresolved`, `named`, `no-cycle` and the other rules that need a resolver. `tsc` already reports unresolved imports, and these rules need `eslint-import-resolver-typescript` as a second dependency.
+- Linting the root `eslint.config.js`. No workspace's `eslint .` covers it today.
+
+## Tech stack
+
+Existing: TypeScript 6.0, ESLint 10.15 (flat config, `defineConfig`), typescript-eslint 8.73, Prettier 3.10.
+
+**New dev dependency (root):** `eslint-plugin-import-x` `4.18.1`, pinned.
+
+- **Why:** the issue asks for import rules, and typescript-eslint has none for import hygiene (duplicates, order, default exports).
+- **Why not `eslint-plugin-import`:** its 2.32.0 release supports ESLint only up to `^9`, and we run ESLint 10.
+- **Maintained:** last published 2026-11-09 (un-ts/eslint-plugin-import-x). Its peer range `eslint: ^8.57 || ^9 || ^10` covers 10.15, and it ships flat configs. Its other peers (`@typescript-eslint/utils`, `eslint-import-resolver-node`) are optional.
 
 ## Design
 
+One added block in the root `eslint.config.js`, plus one block scoped to `packages/shared`. No per-workspace config.
+
+```js
+import importX from 'eslint-plugin-import-x';
+
+// after tseslint.configs.recommended
+{
+  plugins: { 'import-x': importX },
+  rules: {
+    'import-x/first': 'error',
+    'import-x/newline-after-import': 'error',
+    'import-x/no-duplicates': 'error',
+    'import-x/order': 'error', // default groups: builtin, external, parent, sibling, index
+  },
+},
+{
+  // #1 convention: named exports only in shared
+  files: ['packages/shared/src/**/*.ts'],
+  rules: { 'import-x/no-default-export': 'error' },
+},
 ```
-packages/shared/src/
-  index.ts             re-exports only
-  schemas/health.ts    healthStatusSchema, HealthStatus = z.infer<...>, health()
-  schemas/errors.ts    validationIssueSchema, validationErrorSchema, ValidationError
-  schemas/*.test.ts
+
+Decisions:
+
+1. **Only rules that work without a resolver.** These four rules work on the import statements themselves, so we don't need a TypeScript resolver dependency. tsc already catches broken paths.
+2. **`import-x/order` with default options.** The existing files already follow its default grouping (packages first, then relative imports, with no blank lines between them), so turning it on shouldn't change any file. We don't sort alphabetically, because that would rewrite most import blocks and gain little.
+3. **`no-default-export` only in `packages/shared/src`.** This turns the #1 "named exports only in shared" convention into a lint rule. Next pages, layouts and config files need default exports, so the rule stays out of the apps.
+4. **Every rule is `error`, not `warn`.** That matches how the repo treats `no-img-element`: a warning wouldn't block CI.
+5. **Turbo cache.** The lint task already lists `$TURBO_ROOT$/eslint.config.js` as an input. A new dependency changes `pnpm-lock.yaml`, which Turbo hashes anyway, so `turbo.json` stays as it is.
+
+## Commands
+
+```bash
+pnpm add -Dw eslint-plugin-import-x@4.18.1
+pnpm lint
+pnpm format && pnpm format:check
+pnpm lint && pnpm typecheck && pnpm test && pnpm build
 ```
 
-1. **Schema first, type inferred.** Each contract is a zod schema named `<thing>Schema`, plus `type Thing = z.infer<typeof thingSchema>`. Types are never written by hand next to a schema.
-2. **Health.** `HealthStatus` becomes `z.infer<typeof healthStatusSchema>`, with the same shape (`{ ok: boolean; service: string }`). `health()` stays.
-3. **Validation error.** `validationErrorSchema` describes the 400 body that `ZodValidationPipe` already returns: `{ statusCode: 400, error: 'Bad Request', message: { path: (string|number)[], code: string }[] }`. The pipe types its issue list with the shared `ValidationIssue`. Its behaviour doesn't change, and the existing no-echo tests stay as they are.
-4. **Web.** `status()` becomes an async server-side fetch of `${API_URL}/health`, and the response is parsed with `healthStatusSchema.safeParse`. A network error, a non-2xx response or a body that fails the schema all show `api: down`, and the page never crashes. The `API_URL` fallback moves into `apps/web/src/lib/api-url.ts` so `next.config.ts` and `status()` share it. The page shows the API's health instead of a hardcoded web status.
-5. **No new dependencies.** The web calls methods on the schemas it imports, so it doesn't need to list zod itself.
+## Testing strategy
 
-## Tests
+This ticket only changes configuration, so there are no Vitest tests. Each rule is proven by hand with a throwaway change that `pnpm lint` has to reject. Those checks are listed under Success criteria, and the edits are reverted afterwards.
 
-- `packages/shared`: each schema accepts a valid example and rejects a wrong-typed one. `health()` output passes `healthStatusSchema`.
-- `apps/api`: an existing app test asserts that `/health` and the echo route's 400 body parse with the shared schemas. This test is what proves the API and shared schemas match.
-- `apps/web`: `status()` with a stubbed `fetch` covers four cases (ok, non-2xx, bad body, network error). The existing `next-config.test.ts` keeps passing after the move.
+## Boundaries
 
-## Done when
+- **Always:** pin the new dependency's version; run the full CLAUDE.md commit sequence before committing; keep a single root ESLint config.
+- **Ask first:** adding any other ESLint plugin or resolver; enabling type-aware linting; changing `.prettierrc` style options.
+- **Never:** set a rule to `warn` or add `eslint-disable` comments to get to green; turn off `strict` or `noUncheckedIndexedAccess`; reformat files the new rules don't touch.
 
-`pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build` all pass from the root.
+## Success criteria
+
+1. `pnpm lint` exits 0 across all three workspaces, with no warnings.
+2. Adding a second `import { z } from 'zod';` line to `packages/shared/src/schemas/health.ts` makes `pnpm lint` fail with `import-x/no-duplicates`.
+3. Adding `export default 1;` to a file in `packages/shared/src` makes `pnpm lint` fail with `import-x/no-default-export`, and `apps/web/src/app/page.tsx` still passes lint.
+4. Moving a relative import above a package import in an `apps/api` file makes `pnpm lint` fail with `import-x/order`.
+5. `pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build` all pass from the root.
+
+## Open questions
+
+- `pnpm format:check` currently fails on the untracked `.claude/skills/ship-issue/SKILL.md`, which is a local file and not part of this ticket. Should `.claude/` go into `.prettierignore`, or will that skill be committed and formatted?
