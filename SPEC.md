@@ -1,120 +1,133 @@
-# Spec: Vitest setup for unit tests
+# Spec: CLAUDE.md and AI-assisted workflow conventions
 
 ## Objective
 
-Close the one gap left in the unit test setup: coverage reporting. Tickets #1–#5 already built most of what issue #7 asks for. Ticket #5 is merged, and its spec is archived at [docs/specs/5-typescript-strict-eslint-and-prettier-across-the-monorepo.md](docs/specs/5-typescript-strict-eslint-and-prettier-across-the-monorepo.md).
+Close the few gaps left in how Claude Code works in this repo. Tickets #1–#7 already wrote most of what issue #8 asks for into `CLAUDE.md`. Ticket #7 is merged, and its spec is archived at [docs/specs/7-vitest-setup-for-unit-tests.md](docs/specs/7-vitest-setup-for-unit-tests.md).
 
-**Acceptance criteria (from issue #7):**
+This is a docs-only ticket plus one user-requested dependency pin. No product code changes.
 
-- [x] Vitest configured for `apps/api`, `apps/web`, `packages/shared`. **Already done:** `vitest` 5.1.0 is a root dev dependency, and each workspace has `"test": "vitest run --dir src"`. `apps/api` has a `vitest.config.ts` (SWC plugin for decorator metadata, `reflect-metadata` setup file) from #3. `apps/web` and `packages/shared` run on Vitest's defaults, which is all they need.
-- [ ] Coverage reporting (v8). **This is the gap.** No coverage provider is installed and no coverage script exists.
-- [x] Example test in each package. **Already done:** `apps/api/src/app.test.ts` (#3), `apps/web/src/app/page.test.tsx` and `apps/web/src/lib/status.test.ts` (#2), `packages/shared/src/schemas/health.test.ts` (#4), plus others.
-- [x] `pnpm test` runs all unit tests via Turborepo. **Already done:** the root `test` script is `turbo run test`, and `turbo.json` has a `test` task with `dependsOn: ["^build"]`. Today it runs 3 workspaces' tests and passes.
+**Acceptance criteria (from issue #8):**
+
+- [x] `CLAUDE.md` with architecture overview, commands, coding conventions. **Mostly done:** commands (incl. `test:coverage`, #7), monorepo gotchas, code conventions, Fastify rules, layout and stack are all there. **Gap:** the Stack and Layout sections mix built and planned parts. Only a hedge ("Some of this is still planned") separates them, and `content/`, `evals/` and most of `docs/` do not exist. The overview must say what is built and label the rest as planned.
+- [x] Rules: tests required for new logic, no PII in logs, never bypass redaction. **Already done:** "Testing rules" ("New logic needs tests in the same change") and Non-negotiable rules 1 (redact before any external call) and 2 (no PII in logs, traces, errors or audit entries). No change.
+- [x] Workflow notes: how tasks are scoped, reviewed and verified. **Mostly done:** scoping ("Work one GitHub issue at a time", "Keep changes scoped to the issue", plan first), verification ("Before saying a task is done, run …", "Commits" sequence). **Gap:** review. `CLAUDE.md` never says how a ticket goes spec → plan → build → review → PR, or that the user reviews and merges every PR. That flow lives only in [.claude/skills/ship-issue/SKILL.md](.claude/skills/ship-issue/SKILL.md). Add a short pointer, not a copy.
+- [x] Keep a `docs/ai-workflow-log.md` to record notable decisions and corrections. **Gap:** the file does not exist. A rule for it was in `CLAUDE.md` and was dropped in 7ff7592 (#2) with no reason given (see Questions).
+
+**User-requested addition, outside the issue's criteria:**
+
+- [x] Pin `vitest` exactly. Root `package.json` has `"vitest": "^5.1.0"`, but `@vitest/coverage-v8` is pinned to `5.1.0` and peer-requires exactly `vitest: 5.1.0`. A caret lets a fresh resolve pick `5.1.x` and break that peer. Follow-up from PR #94. No other vitest-family package uses a caret: `@vitest/coverage-v8` is already exact, and `unplugin-swc` / `@swc/core` (apps/api) are not tied to the Vitest version.
+- [x] Rename `.claude/.settings.json` to `.claude/settings.json` and remove `AskUserQuestion` from `permissions.deny`. Claude Code only reads `settings.json`, so the deny list and the empty `attribution` setting (which enforces the no-AI-attribution rule) were inactive. `/ship-issue` needs `AskUserQuestion`. Nothing else in the file changed.
 
 The PR description lists which criteria earlier tickets already met, so the reviewer doesn't look for changes that aren't there.
 
 **Out of scope:**
 
-- Integration tests (Testcontainers, `*.int.test.ts`) and e2e tests (Playwright). They get their own tickets.
-- CI. No `.github/workflows` exists yet; that is #9 (Basic GitHub Actions CI).
-- Coverage thresholds. Nothing fails on a low number; this ticket only reports.
-- Reporting untested source files (`coverage.include`). Vitest 5 reports only files the tests load. Listing every file under `src/` needs a per-workspace glob that must skip CSS and Next's generated files. Worth it once there is real product code to measure.
-- A DOM test environment (`jsdom` / `happy-dom`) and `@testing-library/react` for `apps/web`. The existing page test renders the Server Component with `react-dom/server` in the `node` environment, which meets "example test". Add them when a ticket needs client-side interaction tests.
-- A root `vitest.workspace` / `projects` config. Turbo already runs each workspace's tests and caches them per workspace.
+- Rewording, removing or reordering the Non-negotiable rules. They are not touched.
+- Moving existing `CLAUDE.md` content into other docs. `CLAUDE.md` is 145 lines and still reads in one pass.
+- Changing the ship-issue skill; `.claude/` settings beyond the T6 rename and deny-list fix.
+- Backfilling log entries for every past commit. A few seed entries, each citing a commit or PR, show the format.
+- CI (#9).
 
 ## Tech stack
 
-Existing: Vitest 5.1.0 (root dev dependency), Turborepo 2.11, Node 26, pnpm 12.
-
-**New dev dependency (root):** `@vitest/coverage-v8` `5.1.0`, pinned.
-
-- **Why:** the issue asks for v8 coverage, and Vitest loads its coverage provider from this separate package. `v8` is already Vitest's default provider, so no config is needed beyond installing it.
-- **Version:** its peer dependency is `vitest: 5.1.0` exactly, so it must match the installed Vitest. Bump both together.
-- **Maintained:** published by the Vitest team (vitest-dev/vitest monorepo), same release as the installed Vitest.
-- **Placement:** root, next to `vitest`, so all three workspaces resolve it the same way they resolve `vitest`.
-
-No other new dependencies.
-
-## Design
-
-1. **One script per workspace.** Each of `apps/api`, `apps/web`, `packages/shared` gets:
-
-   ```json
-   "test:coverage": "vitest run --dir src --coverage"
-   ```
-
-   Vitest's defaults then apply: provider `v8`, reporters `text` (terminal table), `html`, `clover`, `json`, written to `<workspace>/coverage/`. Test files are excluded from the report by default.
-
-2. **Root script:** `"test:coverage": "turbo run test:coverage"`.
-
-3. **Turbo task** in the root `turbo.json`, same deps and inputs as `test`, plus outputs so cache hits restore the report:
-
-   ```json
-   "test:coverage": {
-     "dependsOn": ["^build"],
-     "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/eslint.config.js"],
-     "outputs": ["coverage/**"]
-   }
-   ```
-
-   The `eslint.config.js` input is there because `packages/shared/src/lint-guard.test.ts` reads it, same as the `test` task.
-
-4. **Keep `coverage/` out of other tools.**
-   - `.gitignore` already has `coverage`. No change.
-   - Prettier 3 skips `.gitignore`d files by default. No `.prettierignore` change.
-   - **ESLint does not read `.gitignore`.** The HTML reporter writes `.js` files (`prettify.js`, `sorter.js`, `block-navigation.js`) into `coverage/`, and each workspace's `eslint .` would lint them and fail. Add `'**/coverage'` to the `ignores` entry in the root `eslint.config.js`.
-   - `tsc` only includes `src`, so it never sees `coverage/`.
-
-5. **Docs.** Add `pnpm test:coverage` to the Commands block in `CLAUDE.md`.
-
-`pnpm test` stays as it is: no coverage, so the everyday loop stays fast.
+No change, except the `vitest` specifier: `^5.1.0` → `5.1.0`. The resolved version stays `5.1.0`, so the lockfile changes only its `specifier:` line.
 
 ## Commands
 
 ```bash
-pnpm add -Dw @vitest/coverage-v8@5.1.0
-pnpm test:coverage                                   # all workspaces, via Turbo
-pnpm --filter @hush/api test:coverage                # one workspace
+pnpm install                 # after the vitest pin; only the lockfile specifier line changes
+pnpm install --frozen-lockfile
 pnpm format && pnpm format:check
-pnpm lint && pnpm typecheck && pnpm test && pnpm build
+pnpm lint && pnpm typecheck && pnpm test
 ```
 
-## Project structure
+## Design
+
+### 1. `CLAUDE.md`: label built vs planned (Stack, Layout)
+
+Every Stack line stays. Planned lines get a `(planned)` tag, and the hedge sentence becomes a one-line summary of what exists:
+
+```markdown
+- **Database (planned):** Postgres on Neon with pgvector, Drizzle ORM and drizzle-kit migrations
+- **Tests:** Vitest (unit, v8 coverage). Planned: Testcontainers with `pgvector/pgvector` (integration), Playwright (e2e)
+- **Evals (planned):** `evals/` folder, run with `pnpm eval`
+
+Built today: the web home page showing API health, the API's `GET /health` with zod env validation and `ZodValidationPipe`, and shared health and error schemas. Anything marked planned does not exist yet; check the code before assuming a piece exists.
+```
+
+Layout marks the missing folders:
 
 ```
-package.json             + test:coverage script, + @vitest/coverage-v8
-turbo.json               + test:coverage task
-eslint.config.js         + '**/coverage' ignore
-apps/api/package.json    + test:coverage script
-apps/web/package.json    + test:coverage script
-packages/shared/package.json  + test:coverage script
-CLAUDE.md                + one line under Commands
-<workspace>/coverage/    generated, gitignored
+content/         (planned) knowledge base markdown (with licence metadata)
+evals/           (planned) golden sets, metrics, results history
+docs/            AI workflow log; planned: PDPA mapping, content sources, error analysis
 ```
 
-## Code style
+### 2. `CLAUDE.md`: two Workflow bullets (strictly additive)
 
-No new source code. Scripts and config follow the existing shape of the `test` script and task.
+Appended to the end of the existing "Workflow" list. No existing bullet changes.
+
+```markdown
+- Ticket flow: spec (`SPEC.md`) → plan (`tasks/`) → build → review → PR. `/ship-issue N` runs it end to end ([.claude/skills/ship-issue/SKILL.md](.claude/skills/ship-issue/SKILL.md)). The user reviews and merges every PR; agents never merge.
+- After a notable decision or correction, add an entry to [docs/ai-workflow-log.md](docs/ai-workflow-log.md) using the format at the top of that file.
+```
+
+The "agents never merge" clause restates ship-issue step 8; it adds no new obligation, but is called out in the PR as an addition to `CLAUDE.md`.
+
+### 3. `docs/ai-workflow-log.md`
+
+Newest first. Header explains when to add an entry (a decision a later session could get wrong, or a correction to something an agent did) and the format:
+
+```markdown
+## YYYY-MM-DD: <short title> (#<issue>)
+
+- **Context:** what was asked or what went wrong
+- **Decision:** what changed and why
+- **Verified by:** the command, test or review that confirmed it
+- **Source:** commit sha(s) and/or PR number
+```
+
+Seed entries, all from real history (dates are commit dates):
+
+| #   | Title                                                                    | Source                                                    |
+| --- | ------------------------------------------------------------------------ | --------------------------------------------------------- |
+| 1   | Keep Next's generated `apps/web/AGENTS.md`; don't rename it to CLAUDE.md | 7ff7592 (#2), PR #90                                      |
+| 2   | `tasks/` is local state; retire specs to `docs/specs/`                   | 14b7b1b (#2) reversing c608016 ("tasks/ stays tracked")   |
+| 3   | Keep `.next/dev` out of Turbo's build cache                              | e4184a8 (#2), found in review (~20 MB of stale dev state) |
+| 4   | Pin the no-echo guarantees; drop the vacuous CORS test                   | aaac2bf, 9afd743 (#3), PR #91                             |
+| 5   | No `consistent-type-imports`: its autofix breaks Nest DI                 | docs/specs/5-…md "Out of scope", PR #93                   |
+
+Each entry states only what its commit message or archived spec says.
+
+### 4. `vitest` pin
+
+Root `package.json`: `"vitest": "5.1.0"`. Run `pnpm install`.
 
 ## Testing strategy
 
-No new tests: this ticket adds tooling, not logic. The existing 3-workspace suite is the check that Vitest still works. Coverage is verified by running it (see Success criteria). The ESLint ignore is verified by running `pnpm lint` after a coverage run, with `coverage/` present.
+No new logic, so no new tests. Verification is:
+
+- `pnpm format:check` on every markdown change.
+- A manual pass against the criteria above: every Stack/Layout item either exists in the repo or is marked planned; each seed log entry's claim matches its cited commit; `git diff CLAUDE.md` shows no change inside "Non-negotiable rules".
+- For the pin: `git diff pnpm-lock.yaml` shows only the `vitest` `specifier:` line; `pnpm install --frozen-lockfile` and `pnpm test` pass.
+- Final: `pnpm format && pnpm format:check && pnpm lint && pnpm typecheck && pnpm test`.
 
 ## Boundaries
 
-- **Always:** pin `@vitest/coverage-v8` to the exact installed Vitest version; run the full CLAUDE.md commit sequence before committing.
-- **Ask first:** adding a DOM environment or Testing Library; adding coverage thresholds; adding any other dependency.
-- **Never:** commit `coverage/`; skip or weaken an existing test; change `pnpm test` to collect coverage.
+- **Always:** keep `CLAUDE.md` lean (pointers over copies); cite a commit or PR for every log entry.
+- **Ask first:** any change to the Non-negotiable rules; restoring anything the user removed on purpose.
+- **Never:** invent log events; describe planned parts as built; commit `tasks/`.
 
 ## Success criteria
 
-1. `pnpm test:coverage` exits 0 from the root, runs all three workspaces through Turbo, and prints a v8 coverage table for each.
-2. `apps/api/coverage/index.html`, `apps/web/coverage/index.html` and `packages/shared/coverage/index.html` exist afterwards.
-3. A second `pnpm test:coverage` with no changes is a full Turbo cache hit and the `coverage/` folders are still present.
-4. With the `coverage/` folders present, `pnpm lint` and `pnpm format:check` both exit 0.
-5. `git status` shows no files under `coverage/`.
-6. `pnpm lint && pnpm typecheck && pnpm test && pnpm build` all pass from the root.
+1. Every item in `CLAUDE.md` Stack and Layout either exists in the repo or is labelled planned.
+2. `CLAUDE.md` Workflow points to the ship-issue flow and to the log, and says the user merges PRs.
+3. `docs/ai-workflow-log.md` exists, has the entry format and at least the five seed entries above, each with a source.
+4. `git diff main -- CLAUDE.md` shows no line removed or changed under "Non-negotiable rules".
+5. `vitest` is `5.1.0` in root `package.json`; lockfile resolves `5.1.0`.
+6. `pnpm format:check && pnpm lint && pnpm typecheck && pnpm test` pass.
 
-## Open questions
+## Questions
 
-None.
+1. **The log rule was removed on purpose?** Resolved: restore a short rule in `CLAUDE.md`. 7ff7592 (#2) had dropped it with no reason given.
+2. **`.claude/.settings.json` is inert.** Resolved: fixed in this ticket (T6). The file is renamed to `.claude/settings.json` and `AskUserQuestion` is removed from `permissions.deny`.
