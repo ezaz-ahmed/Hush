@@ -1,144 +1,111 @@
-# Spec: Pre-commit hooks, PR template and issue templates
+# Spec: Create Neon project and enable pgvector
 
 ## Objective
 
-Catch lint and format problems before they reach a commit, and make every PR and issue carry the checks this project cares about (tests, privacy, evals). Today the CLAUDE.md "Commits" sequence and CI (`.github/workflows/ci.yml`) are the only gates; nothing runs on `git commit`, and `.github/` holds only `workflows/`.
+Set up the hosted Postgres that later tickets build on (Drizzle in #12, schemas in #13/#14, seed in #15), and make the API ready to receive its connection strings. Nothing reads the database yet.
 
-**Acceptance criteria (from issue #10):**
+The Neon work happens in the Neon console, done by the user. The code change is small: two env vars in the API's zod schema, `.env.example` entries, and a README section.
 
-- [ ] husky + lint-staged (lint and format staged files). `git commit` runs ESLint `--fix` and Prettier `--write` on staged files only, and blocks the commit on an unfixable ESLint error.
-- [ ] PR template with checklist: tests, privacy impact, eval impact. `.github/pull_request_template.md`.
-- [ ] Issue templates: feature, bug. `.github/ISSUE_TEMPLATE/feature.yml` and `bug.yml` (YAML issue forms).
+**Acceptance criteria (from issue #11):**
 
-**Also in scope:**
+- [ ] **Manual, verified by the user:** Neon project with `main` and `dev` branches.
+- [ ] **Manual, verified by the user:** `CREATE EXTENSION IF NOT EXISTS vector;` run on each branch (`SELECT extversion FROM pg_extension WHERE extname = 'vector';` returns a row on both).
+- [ ] Connection strings stored in env (pooled and direct): `DATABASE_URL` and `DATABASE_URL_UNPOOLED` in the API env schema, `apps/api/.env.example`, with tests.
+- [ ] Branch strategy documented in `README.md`.
 
-- A bullet in CLAUDE.md "Commits" (after "Only commit when all of them pass") noting the pre-commit hook exists, so agents know a commit can differ from what they staged.
-
-**Out of scope:** commitlint, pre-push hooks, CODEOWNERS, label automation, `ISSUE_TEMPLATE/config.yml`, changes to CI, running typecheck or tests in the hook (too slow; CI and the CLAUDE.md sequence cover them).
+**Out of scope:** Drizzle, migrations, any DB client or driver dependency (#12), local/test database (#16), production branch and migration workflow (#82), web app env (the web app never touches the DB), CI changes.
 
 ## Not high-risk
 
-No redaction, consent, audit, retention, guardrail or prompt code changes. The PR template only _asks_ about those areas. Rule 8: no secrets or env involved.
+No redaction, consent, audit, retention, guardrail or prompt changes. Rule 8 applies: no real connection strings anywhere in the repo, the spec, tests or PR. Env errors print names only (already enforced by `parseEnv`).
 
 ## Design
 
-### New devDependencies (root)
+### Env vars
 
-| Package       | Version   | Why                                                       | Maintained                                                    |
-| ------------- | --------- | --------------------------------------------------------- | ------------------------------------------------------------- |
-| `husky`       | `^9.1.7`  | Installs the git hook via `core.hooksPath`; no runtime    | Latest 9.1.7, npm metadata updated 2026-09                    |
-| `lint-staged` | `^17.6.1` | Runs commands on staged files only, restages fixed output | Latest 17.6.1, published 2026-11-15; `engines.node >=22.22.1` |
+Neon's own names, so values pasted from the Neon console and Vercel/Neon integrations match:
 
-Checked with `npm view <pkg> version time.modified engines` on 2026-11-19. Neither has an install script, so `pnpm-workspace.yaml` `allowBuilds` needs no change.
+| Name                    | What                                    | Used by (later)              |
+| ----------------------- | --------------------------------------- | ---------------------------- |
+| `DATABASE_URL`          | Pooled string (host contains `-pooler`) | app runtime queries          |
+| `DATABASE_URL_UNPOOLED` | Direct string                           | drizzle-kit migrations (#12) |
 
-### husky
+**Decision: optional for now.** Both are `.optional()` in `apps/api/src/config/env.ts`. Why:
 
-Root `package.json`:
+- Nothing consumes them yet, so requiring them would only break things: `pnpm dev`, `apps/api/src/app.test.ts` (boots `AppModule`, which runs `validateEnv`), and CI (`ci.yml` has no env and must stay secret-free).
+- #12 adds the first consumer and flips them to required (or required-when-used) at that point. The schema gets a one-line comment saying so.
 
-```json
-"scripts": {
-  "prepare": "husky"
-}
+**Validation, if set:** must be a `postgres://` or `postgresql://` URL. In zod 4:
+
+```ts
+// shortcut: optional until a DB client exists; #12 makes these required.
+const postgresUrl = z.url({ protocol: /^postgres(ql)?$/ }).optional();
+
+export const envSchema = z.object({
+  PORT: z.coerce.number().int().min(1).max(65535).default(5555),
+  DATABASE_URL: postgresUrl,
+  DATABASE_URL_UNPOOLED: postgresUrl,
+});
 ```
 
-`.husky/pre-commit` (v9 format: plain shell, no shebang or `husky.sh` sourcing):
+No check that the pooled one contains `-pooler` or that both are set together: cheap to add, but it couples us to Neon's host format and nothing needs it yet.
 
-```sh
-pnpm exec lint-staged
+An empty value (`DATABASE_URL=`) is treated as unset, same as a missing line. `.env.example` still ships both lines **commented out**:
+
+```bash
+# Neon Postgres. Optional for now (nothing reads them until Drizzle, #12).
+# Pooled connection string (host has -pooler). App runtime.
+# DATABASE_URL=postgresql://USER:PASSWORD@ep-example-pooler.REGION.aws.neon.tech/hush?sslmode=require
+# Direct connection string. Migrations.
+# DATABASE_URL_UNPOOLED=postgresql://USER:PASSWORD@ep-example.REGION.aws.neon.tech/hush?sslmode=require
 ```
 
-**CI:** `pnpm install --frozen-lockfile` runs the root `prepare` script. CI checks out with `.git` present, so husky just sets `core.hooksPath` in the runner's throwaway clone and exits 0; without `.git` husky v9 prints a notice and also exits 0. No `HUSKY=0` and no `ci.yml` change needed. The implementer verifies this on the PR's CI run (install step green).
+`ConfigModule.forRoot` already loads `apps/api/.env` (gitignored by `.env*`), so no loader change.
 
-Escape hatch: `HUSKY=0 git commit ...` skips the hook locally. CLAUDE.md already forbids `--no-verify`, and CI still runs every gate, so the hook is a convenience, not the enforcement point.
+### README section: "Database (Neon)"
 
-### lint-staged
+Short section after "API":
 
-Config as a `lint-staged` key in root `package.json` (no extra file):
-
-```json
-"lint-staged": {
-  "*.{js,mjs,cjs,ts,tsx}": ["eslint --fix --no-warn-ignored", "prettier --write"],
-  "*.{json,md,yml,yaml,css}": "prettier --write"
-}
-```
-
-- **Non-overlapping globs on purpose.** lint-staged runs different globs concurrently; if one file matched both, ESLint and Prettier could write it at the same time. Within one glob the array runs in order (ESLint fix, then Prettier).
-- **Root `eslint` works for any workspace file.** There is a single flat config, `/eslint.config.js`; the workspaces have no config of their own and their `lint` script is just `eslint .`, which resolves the same root config. Its rules are path-scoped (`packages/shared/src/**`, `apps/web/**`) relative to the root, and the Next plugin's `rootDir` is absolute, so running from the repo root (where lint-staged runs) gives the same result as Turbo's per-workspace run. `typescript-eslint` uses `configs.recommended` (not type-aware), so no `parserOptions.project` is needed.
-- `--no-warn-ignored`: staged files under ESLint `ignores` (e.g. `next-env.d.ts`) are skipped silently instead of warning.
-- Prettier respects `.prettierignore` for explicitly passed files (e.g. `pnpm-lock.yaml` is skipped). The extension list matches what Prettier formats in this repo today; other files (`.husky/pre-commit`, `.nvmrc`) are not formatted by `pnpm format` either.
-
-### PR template: `.github/pull_request_template.md`
-
-Markdown, short. Sections:
-
-1. **What and why** — `Closes #` line, one-paragraph summary.
-2. **Tests** — checkboxes: new logic has tests in this change; bug fix starts with a failing regression test; no test deleted, skipped or weakened; `pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build` pass locally.
-3. **Privacy impact** — "None" checkbox, or tick each area this change touches, confirm the guarantee still holds, and explain (CLAUDE.md non-negotiables and high-risk areas):
-   - Redaction: all user text still goes through PII redaction before any LLM, embedding, tracing or log call.
-   - No PII in logs, traces, errors or audit entries.
-   - Consent still enforced in the API (chat endpoints behind the consent guard).
-   - Audit logs stay append-only.
-   - Guardrails (emergency, diagnosis, dosage) not bypassed or weakened; emergencies skip the LLM.
-   - Answers stay grounded with valid citations; retrieved content stays delimited as data.
-   - Retention or prompt changes.
-   - Line: "Touches redaction, consent, audit, retention, guardrails or prompts? This is high-risk: tests written first, called out here."
-4. **Eval impact** — "None (no prompt, retrieval, chunking or model config change)" checkbox, or: `pnpm eval` run with before/after metrics pasted; golden set cases added, not rewritten (reason stated for any change); PII leakage rate is 0.
-5. **Notes** — schema migrations, new env vars added to `.env.example`, new dependencies and why.
-
-No attribution fields (CLAUDE.md: no AI attribution in commits or PR descriptions).
-
-### Issue templates: `.github/ISSUE_TEMPLATE/`
-
-YAML issue forms. Both start with a `markdown` block: **"Do not paste patient data, real names, contact details or any other PII. Use made-up examples."** (bug.yml especially, since bug reports invite pasted chat transcripts and logs).
-
-- `feature.yml` — name "Feature", no title prefix (branch slug derives from the issue title). Fields: problem/goal (textarea, required), proposed behaviour (textarea, required), acceptance criteria (textarea, required, prefilled `- [ ] `), privacy/safety impact (dropdown: None / Touches high-risk area; optional details textarea).
-- `bug.yml` — name "Bug", no title prefix (branch slug derives from the issue title). Fields: what happened (required), expected (required), steps to reproduce (required), area (dropdown: web / api / shared / CI/tooling / other), logs (textarea, `render: text`, description repeats the no-PII warning).
-
-No `labels:` (no label setup exists; label automation is out of scope). No `config.yml`: blank issues stay allowed and there are no external contact links to add.
-
-## Project structure (new and changed files)
-
-```
-package.json                          prepare script, lint-staged key, 2 devDependencies
-pnpm-lock.yaml                        updated by pnpm add
-.husky/pre-commit                     pnpm exec lint-staged
-.github/pull_request_template.md
-.github/ISSUE_TEMPLATE/feature.yml
-.github/ISSUE_TEMPLATE/bug.yml
-CLAUDE.md                             hook bullet under Commits
-```
+- **Branches:** `main` is the production-like branch (protect it; production hardening is #82). `dev` is branched from `main` for local development; your `.env` points at `dev`. Integration tests use Testcontainers (`pgvector/pgvector`), never Neon. Seed scripts must refuse to run against `main`/production.
+- **One-time setup (manual):**
+  1. Create a Neon project (Postgres 17+, region nearest you); its default branch is `main`.
+  2. Create a branch `dev` from `main`.
+  3. In the SQL editor, on **each** branch, run `CREATE EXTENSION IF NOT EXISTS vector;`.
+  4. From Connect on the `dev` branch, copy the pooled string into `DATABASE_URL` and the direct string into `DATABASE_URL_UNPOOLED` in `apps/api/.env`.
+- Update the "API" paragraph's env list to mention the two optional vars.
 
 ## Commands
 
 ```bash
-pnpm add -D -w husky@^9.1.7 lint-staged@^17.6.1   # runs prepare -> husky sets core.hooksPath
-git config core.hooksPath                          # expect .husky/_
-pnpm exec lint-staged --debug                      # dry check against current staged files
+pnpm --filter @hush/shared build
+pnpm --filter @hush/api exec vitest run src/config/env.test.ts
+pnpm format && pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build
 ```
 
 ## Testing strategy
 
-No unit tests: this is config. Proof:
+Add to `apps/api/src/config/env.test.ts` (test first):
 
-1. Hook fires: stage a `.ts` file with a fixable issue (bad import order) and a mis-formatted `.md`; `git commit` fixes both and the commit contains the fixed content.
-2. Hook blocks: stage a `.ts` file with an unfixable ESLint error (e.g. unused variable); `git commit` fails. Revert afterwards; do not commit the test files.
-3. Workspace scoping: a staged `packages/shared/src/*.ts` with a default export fails (shows the path-scoped rule applies from root).
-4. Full CLAUDE.md sequence passes (`format:check` covers the new YAML and Markdown).
-5. CI on the PR is green, including `pnpm install --frozen-lockfile` with the new `prepare` script.
-6. Templates: after merge, GitHub's "New issue" page shows Feature and Bug forms; a new PR body is prefilled. (Templates on a non-default branch are not live, so this is checked after merge.)
+1. Unset: `validateEnv({})` still equals `{ PORT: 5555 }` (existing test, unchanged, proves optional).
+2. Accepts `postgres://` and `postgresql://` URLs for both vars, returned unchanged.
+3. Treats `''` as unset for each var: `validateEnv({ <NAME>: '' })` strictly equals `{ PORT: 5555 }` (key absent).
+4. Rejects for each var, with exact message `Invalid env: <NAME>`: `'  '` (whitespace only), `not-a-url`, `mysql://u:p@h/db`, `https://h/db`.
+5. Never leaks the value: an invalid `DATABASE_URL` containing a fake password (`postgresql://u:hunter2@h:bad/db` or similar) throws a message without `hunter2`.
+
+All fake values; no network.
 
 ## Boundaries
 
-- Always: run the full CLAUDE.md commit sequence before committing; keep the hook to lint-staged only.
-- Ask first: adding typecheck/tests to the hook, adding commitlint or pre-push, changing `ci.yml`, adding labels.
-- Never: commit with `--no-verify` or `HUSKY=0` to get past a failing hook; add AI attribution fields to templates.
+- Always: fake placeholder hosts and passwords only; names-only env errors; full CLAUDE.md commit sequence.
+- Ask first: making the vars required; adding any DB dependency; touching CI or the web app.
+- Never: real connection strings in code, tests, docs, spec, commits or PR; pointing tests or CI at Neon.
 
 ## Success criteria
 
-- Fresh `pnpm install` installs the hook; `git commit` runs lint-staged and fixes or blocks as in Testing 1-3.
-- PR template and both issue forms exist with the sections above; the bug form carries the no-PII warning.
-- All local gates and the PR's `ci` check are green.
+- Both Neon checkboxes confirmed by the user.
+- `env.test.ts` covers the cases above and passes; the full gate sequence passes with no `.env` present.
+- `apps/api/.env.example` documents both vars (commented out); README has the "Database (Neon)" section.
 
 ## Open questions
 
-None blocking. Decisions you may override: (1) lint-staged config in `package.json`, not a separate file; (2) no `config.yml`, blank issues allowed; (3) no labels on the issue forms; (4) CLAUDE.md gets a hook bullet under Commits.
+None blocking. Decisions you may override: (1) vars optional until #12; (2) scheme + non-empty host check only, no `-pooler` / both-or-neither check; (3) `.env.example` lines commented out.

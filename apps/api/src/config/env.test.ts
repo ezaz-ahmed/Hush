@@ -23,4 +23,36 @@ describe('validateEnv', () => {
       expect.objectContaining({ message: expect.not.stringContaining('hunter2') }),
     );
   });
+
+  describe.each(['DATABASE_URL', 'DATABASE_URL_UNPOOLED'])('%s', (name) => {
+    it.each([
+      'postgres://u:p@h/db',
+      'postgresql://u:p@h/db',
+      'postgresql://u:p@ep-xxx-pooler.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require',
+    ])('accepts %s unchanged', (url) => {
+      expect(validateEnv({ [name]: url })).toEqual({ PORT: 5555, [name]: url });
+    });
+
+    it('treats an empty value as unset (key absent from the result)', () => {
+      expect(validateEnv({ [name]: '' })).toStrictEqual({ PORT: 5555 });
+    });
+
+    it.each([
+      '  ',
+      'not-a-url',
+      'mysql://u:p@h/db',
+      'https://h/db',
+      'postgresql://',
+      'postgresql:///db',
+      'postgres:h',
+    ])('rejects %j', (value) => {
+      expect(() => validateEnv({ [name]: value })).toThrow(new Error(`Invalid env: ${name}`));
+    });
+
+    it('never puts the value in the error', () => {
+      expect(() => validateEnv({ [name]: 'postgresql://u:hunter2@h:bad/db' })).toThrow(
+        expect.objectContaining({ message: expect.not.stringContaining('hunter2') }),
+      );
+    });
+  });
 });
