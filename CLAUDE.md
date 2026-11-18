@@ -2,7 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-[SPEC.md](SPEC.md) and [tasks/](tasks/) (`plan.md`, `todo.md`) hold the spec and task list for the **current ticket** and are rewritten each ticket; earlier specs live in git history. For anything ticket-specific, SPEC.md wins over this file; flag the conflict.
+[SPEC.md](SPEC.md) holds the spec for the **current ticket**. For anything ticket-specific, SPEC.md wins over this file; flag the conflict.
+
+- **Starting a new spec:** first retire the current one with `git mv SPEC.md docs/specs/<branch-name>.md` (branches are `<issue>-<slug>`, e.g. `docs/specs/2-scaffold-nextjs-web-app.md`), then write the new `SPEC.md`.
+- `tasks/` (`plan.md`, `todo.md`) is local working state and is gitignored. Never commit it.
 
 ## What Hush is
 
@@ -55,6 +58,7 @@ packages/shared  shared types, zod schemas, utilities
 content/         knowledge base markdown (with licence metadata)
 evals/           golden sets, metrics, results history
 docs/            PDPA mapping, content sources, error analysis, AI workflow log
+docs/specs/      retired specs, one per ticket
 ```
 
 Tests sit next to source as `src/**/*.test.ts(x)`. Integration tests use `*.int.test.ts`; e2e tests live in the Playwright folder.
