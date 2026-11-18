@@ -8,6 +8,17 @@ const schema = z.object({
   age: z.number().int().default(30),
 });
 
+// Kept outside the assertions so a regression reports "expected the pipe to throw", not a TypeError.
+const errorOf = (fn: () => unknown): BadRequestException => {
+  try {
+    fn();
+  } catch (e) {
+    if (e instanceof BadRequestException) return e;
+    throw e;
+  }
+  throw new Error('expected the pipe to throw');
+};
+
 describe('ZodValidationPipe', () => {
   const pipe = new ZodValidationPipe(schema);
 
@@ -15,45 +26,23 @@ describe('ZodValidationPipe', () => {
     expect(pipe.transform({ name: '  Ada  ' })).toEqual({ name: 'Ada', age: 30 });
   });
 
-  it('throws BadRequestException listing paths and codes', () => {
-    try {
-      pipe.transform({ name: 1, age: 'x' });
-      expect.unreachable();
-    } catch (e) {
-      expect(e).toBeInstanceOf(BadRequestException);
-      // toEqual, not toMatchObject: any extra field (zod's message, the input) must fail this.
-      expect((e as BadRequestException).getResponse()).toEqual({
-        statusCode: 400,
-        error: 'Bad Request',
-        message: [
-          { path: ['name'], code: 'invalid_type' },
-          { path: ['age'], code: 'invalid_type' },
-        ],
-      });
-    }
-  });
-
-  it('never echoes the submitted value in the error', () => {
-    const pii = 'jane.doe@example.com';
-    try {
-      pipe.transform({ name: 'ok', age: pii });
-      expect.unreachable();
-    } catch (e) {
-      expect(JSON.stringify((e as BadRequestException).getResponse())).not.toContain(pii);
-    }
+  it('throws BadRequestException listing only paths and codes', () => {
+    // toEqual, not toMatchObject: any extra field (zod's message, the input) must fail this.
+    expect(errorOf(() => pipe.transform({ name: 1, age: 'x' })).getResponse()).toEqual({
+      statusCode: 400,
+      error: 'Bad Request',
+      message: [
+        { path: ['name'], code: 'invalid_type' },
+        { path: ['age'], code: 'invalid_type' },
+      ],
+    });
   });
 
   it('never echoes input that zod puts in its own message', () => {
     // zod's unrecognized_keys message quotes the key, so this leaks if messages are passed through.
     const pii = 'jane.doe@example.com';
-    try {
-      new ZodValidationPipe(z.object({ name: z.string() }).strict()).transform({
-        name: 'ok',
-        [pii]: 1,
-      });
-      expect.unreachable();
-    } catch (e) {
-      expect(JSON.stringify((e as BadRequestException).getResponse())).not.toContain(pii);
-    }
+    const strict = new ZodValidationPipe(z.object({ name: z.string() }).strict());
+    const error = errorOf(() => strict.transform({ name: 'ok', [pii]: 1 }));
+    expect(JSON.stringify(error.getResponse())).not.toContain(pii);
   });
 });

@@ -77,7 +77,7 @@ apps/api/
   src/
     main.ts                  → import 'reflect-metadata'; create app, listen(PORT)
     app.module.ts            → ConfigModule.forRoot({ isGlobal, validate }), HealthModule
-    app.test.ts              → boots the real AppModule; /health, 404, no CORS header
+    app.test.ts              → boots the real AppModule; /health, 404, pipe wiring
     config/
       env.ts                 → envSchema (zod), Env type, validateEnv()
       env.test.ts
@@ -185,9 +185,9 @@ All tests are unit-level and deterministic. No network, no database, no real env
   - the error body doesn't contain the submitted value; checked with a PII-looking string
 - **`app.test.ts`**: builds the real `AppModule` with `@nestjs/testing` on `FastifyAdapter`, then uses `app.inject()`:
   - `GET /health` → 200, `{ ok: true, service: 'api' }`
-  - `GET /health` with `Origin: http://evil.example` → no `access-control-allow-origin` header (CORS is really off)
   - `GET /nope` → 404
   - a test-only controller with `@Body(new ZodValidationPipe(schema))` proves the pipe works through Nest and Fastify: a bad body gets 400, a good body gets 201
+- **CORS being off is checked by hand** (success criterion 1), not by a test. The test app is built without `main.ts`, so a test couldn't see `enableCors` being added there. Once #86 shares app setup between `main.ts` and the tests, it becomes testable.
 - **`apps/web/src/next-config.test.ts`**: `rewrites()` maps `/api/:path*` to `http://localhost:5555/:path*` by default, and to `$API_URL/:path*` when `API_URL` is set (stub the env, then re-import the config). Success criterion 1 checks the proxy end to end by hand.
 - Type safety is enforced by `pnpm typecheck`. Changing `HealthStatus` in shared must break the API typecheck.
 - No coverage threshold yet.
