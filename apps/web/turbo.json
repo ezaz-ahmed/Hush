@@ -5,6 +5,9 @@
     "build": {
       "env": ["API_URL"]
     },
+    "dev": {
+      "env": ["API_URL"]
+    },
     "typecheck": {
       "dependsOn": ["^build", "build"]
     }
