@@ -44,7 +44,9 @@ describe('ZodValidationPipe', () => {
         ctx.addIssue({ code: 'custom', path: [Symbol('k'), 0] });
       }),
     );
-    expect(errorOf(() => withSymbol.transform({})).getResponse()).toMatchObject({
+    expect(errorOf(() => withSymbol.transform({})).getResponse()).toEqual({
+      statusCode: 400,
+      error: 'Bad Request',
       message: [{ path: ['Symbol(k)', 0], code: 'custom' }],
     });
   });
