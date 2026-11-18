@@ -12,6 +12,11 @@
       "dependsOn": ["^build"],
       "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/eslint.config.js"]
     },
+    "test:coverage": {
+      "dependsOn": ["^build"],
+      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/eslint.config.js"],
+      "outputs": ["coverage/**"]
+    },
     "dev": { "dependsOn": ["^build"], "cache": false, "persistent": true }
   }
 }

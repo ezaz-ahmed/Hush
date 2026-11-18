@@ -14,7 +14,8 @@
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "next typegen && tsc --noEmit",
-    "test": "vitest run --dir src"
+    "test": "vitest run --dir src",
+    "test:coverage": "vitest run --dir src --coverage"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "4.3.5",
