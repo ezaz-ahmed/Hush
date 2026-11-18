@@ -51,12 +51,12 @@ HTTP tests use Fastify's built-in `app.inject()`, so no supertest. Everything el
 Root commands don't change. The `@hush/api` scripts become:
 
 ```jsonc
-"dev":       "tsc && (tsc --watch --preserveWatchOutput & node --watch dist/main.js)", // http://localhost:5555
-"build":     "tsc",
+"dev":       "tsc -p tsconfig.build.json && (tsc -p tsconfig.build.json --watch --preserveWatchOutput & node --watch dist/main.js)", // http://localhost:5555
+"build":     "tsc -p tsconfig.build.json",   // excludes *.test.ts, like @hush/shared
 "start":     "node dist/main.js",   // local prod check only, not a Turbo task
 "lint":      "eslint .",
 "typecheck": "tsc --noEmit",
-"test":      "vitest run --dir src"   // src only: tsc also compiles tests into dist/
+"test":      "vitest run --dir src"
 ```
 
 ```bash
@@ -72,6 +72,7 @@ pnpm turbo run test --filter=@hush/api...
 apps/api/
   package.json
   tsconfig.json              → adds experimentalDecorators + emitDecoratorMetadata
+  tsconfig.build.json        → extends tsconfig.json, excludes src/**/*.test.ts
   vitest.config.ts           → unplugin-swc, setupFiles: reflect-metadata
   src/
     main.ts                  → import 'reflect-metadata'; create app, listen(PORT)

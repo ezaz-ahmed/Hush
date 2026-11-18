@@ -13,8 +13,8 @@
     "zod": "4.6.7"
   },
   "scripts": {
-    "dev": "tsc && (tsc --watch --preserveWatchOutput & node --watch dist/main.js)",
-    "build": "tsc",
+    "dev": "tsc -p tsconfig.build.json && (tsc -p tsconfig.build.json --watch --preserveWatchOutput & node --watch dist/main.js)",
+    "build": "tsc -p tsconfig.build.json",
     "start": "node dist/main.js",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
