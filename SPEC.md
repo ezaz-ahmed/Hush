@@ -2,7 +2,7 @@
 
 ## Objective
 
-Turn the `@hush/web` TypeScript stub into a real Next.js app, so later UI tickets have a working shell to build in. Ticket #1 (the monorepo foundation) is merged. Its spec is in git history at `9841799`.
+Turn the `@hush/web` TypeScript stub into a real Next.js app, so later UI tickets have a working shell to build in. Ticket #1 (the monorepo foundation) is merged. Its spec is archived at [docs/specs/1-initialise-pnpm-turborepo-monorepo.md](docs/specs/1-initialise-pnpm-turborepo-monorepo.md).
 
 **Users:** developers working on Hush, both humans and agents.
 
@@ -77,7 +77,7 @@ These go away: `apps/web/src/index.ts`, `apps/web/src/index.test.ts` and the `ts
 
 Other files that change:
 
-- `turbo.json`: `build.outputs` gains `.next/**` and `!.next/cache/**`.
+- `turbo.json`: `build.outputs` gains `.next/**`, `!.next/cache/**` and `!.next/dev/**`.
 - `eslint.config.js`: adds a block for the Next plugin.
 - `.gitignore`: adds `next-env.d.ts`. `.next` is already ignored.
 - `README.md`: notes the web dev URL.
