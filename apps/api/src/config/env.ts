@@ -1,13 +1,13 @@
 import { parseEnv } from '@hush/shared';
 import { z } from 'zod';
 
-// shortcut: optional until a DB client exists, #12 makes these required.
-const postgresUrl = z.url({ protocol: /^postgres(ql)?$/, hostname: z.regexes.hostname }).optional();
+const postgresUrl = z.url({ protocol: /^postgres(ql)?$/, hostname: z.regexes.hostname });
 
 export const envSchema = z.object({
   PORT: z.coerce.number().int().min(1).max(65535).default(5555),
   DATABASE_URL: postgresUrl,
-  DATABASE_URL_UNPOOLED: postgresUrl,
+  // Optional: read only by drizzle-kit (drizzle.config.ts), never by the API.
+  DATABASE_URL_UNPOOLED: postgresUrl.optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;

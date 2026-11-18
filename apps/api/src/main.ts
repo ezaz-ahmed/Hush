@@ -7,4 +7,5 @@ import type { Env } from './config/env.js';
 
 const app = await NestFactory.create<NestFastifyApplication>(AppModule, new FastifyAdapter());
 const config = app.get<ConfigService<Env, true>>(ConfigService);
+app.enableShutdownHooks();
 await app.listen(config.get('PORT', { infer: true }), 'localhost');
