@@ -33,7 +33,7 @@ To run a task for one workspace and everything it depends on:
 
 ```bash
 pnpm turbo run test --filter=@hush/api...
-pnpm --filter @hush/web dev
+pnpm turbo run dev --filter=@hush/web...
 ```
 
 ## Workspaces

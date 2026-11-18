@@ -31,7 +31,7 @@ Set up Hush as a TypeScript monorepo so that web, API and shared code live in on
 | Package manager | pnpm 12 workspaces with `engineStrict: true` in `pnpm-workspace.yaml` (pnpm 12 ignores `engine-strict` in `.npmrc`)            |
 | Task runner     | Turborepo 2 (`turbo.json` with the `tasks` key)                                                                                |
 | Language        | TypeScript 6.0 (typescript-eslint 8 supports `<6.1`; TS 7 has no JS API for ESLint to use), `strict`, ESM (`"type": "module"`) |
-| Lint / format   | ESLint 9 flat config + `typescript-eslint` + Prettier                                                                          |
+| Lint / format   | ESLint 10 flat config + `typescript-eslint` + Prettier                                                                         |
 | Test            | Vitest                                                                                                                         |
 | Stub dev runner | `tsx watch` (it gets replaced once the frameworks land)                                                                        |
 

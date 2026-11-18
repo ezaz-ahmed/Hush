@@ -5,3 +5,8 @@ dist
 *.tsbuildinfo
 .env*
 !.env.example
+.npmrc
+*.pem
+*.key
+coverage
+*.log
