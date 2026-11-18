@@ -23,4 +23,18 @@ describe('next config rewrites', () => {
       { source: '/api/:path*', destination: 'https://api.example.com/:path*' },
     ]);
   });
+
+  it('falls back to the local API when API_URL is empty', async () => {
+    vi.stubEnv('API_URL', '');
+    expect(await rewrites()).toEqual([
+      { source: '/api/:path*', destination: 'http://localhost:5555/:path*' },
+    ]);
+  });
+
+  it('drops a trailing slash from API_URL', async () => {
+    vi.stubEnv('API_URL', 'https://api.example.com/');
+    expect(await rewrites()).toEqual([
+      { source: '/api/:path*', destination: 'https://api.example.com/:path*' },
+    ]);
+  });
 });
