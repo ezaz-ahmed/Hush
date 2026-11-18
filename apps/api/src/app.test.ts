@@ -2,7 +2,7 @@ import { Body, Controller, Post } from '@nestjs/common';
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
 import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { healthStatusSchema, validationErrorSchema } from '@hush/shared';
 import { z } from 'zod';
 import { AppModule } from './app.module.js';
@@ -70,5 +70,24 @@ describe('app', () => {
       message: [{ path: ['n'], code: 'invalid_type' }],
     });
     expect(res.body).not.toContain('jane.doe@example.com');
+  });
+});
+
+describe('startup env validation', () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it('refuses to load the app module when PORT is invalid, naming it without the value', async () => {
+    // process.env wins over a local .env in ConfigModule, so this is deterministic.
+    vi.stubEnv('PORT', 'abc');
+    vi.resetModules();
+    // forRoot validates inside a promise Nest awaits at compile, so compile, not just import.
+    const err = await import('./app.module.js')
+      .then(({ AppModule: Fresh }) => Test.createTestingModule({ imports: [Fresh] }).compile())
+      .then(
+        () => undefined,
+        (e: unknown) => e,
+      );
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toBe('Invalid env: PORT');
   });
 });
