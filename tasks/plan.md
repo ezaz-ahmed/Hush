@@ -33,7 +33,7 @@ root pins (package.json, pnpm-workspace.yaml, .nvmrc)
 - [x] `pnpm build && pnpm typecheck && pnpm test` pass, and the second `pnpm build` reports FULL TURBO
 
 ### Phase 2: Apps
-- [ ] Task 3: `@hush/api` stub that consumes shared
+- [x] Task 3: `@hush/api` stub that consumes shared
 - [ ] Task 4: `@hush/web` stub that consumes shared
 
 ### Checkpoint B

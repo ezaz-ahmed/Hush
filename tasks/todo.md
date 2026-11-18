@@ -42,15 +42,16 @@ Plan: [plan.md](plan.md) · Spec: [SPEC.md](../SPEC.md)
 **Description:** A minimal API workspace that imports `@hush/shared`. This proves that workspace linking and the build order work.
 
 **Acceptance criteria:**
-- [ ] `apps/api` depends on `"@hush/shared": "workspace:*"` and has all five scripts (`dev` = `tsx watch src/index.ts`)
-- [ ] The smoke test imports `health` from `@hush/shared` and asserts on `health('api')`
+- [x] `apps/api` depends on `"@hush/shared": "workspace:*"` and has all five scripts (`dev` = `tsx watch src/index.ts`)
+- [x] The smoke test imports `health` from `@hush/shared` and asserts on `health('api')`
 
 **Verification:**
-- [ ] `pnpm turbo run build test typecheck --filter=@hush/api...` exits 0, and shared builds first
-- [ ] `pnpm --filter @hush/api dev` prints the health object and restarts when a file is saved
+- [x] `pnpm turbo run build test typecheck --filter=@hush/api...` exits 0, and shared builds first
+- [x] `pnpm --filter @hush/api dev` prints the health object and restarts when a file is saved
 
 **Dependencies:** Task 2
 **Files:** `apps/api/{package.json,tsconfig.json,src/index.ts,src/index.test.ts}`
+**Notes:** `vitest run --dir src` is required: without it, Vitest 5 also runs the compiled `dist/index.test.js` (2 files instead of 1). `import.meta.main` keeps the stub from logging when tests import it.
 **Scope:** S
 
 ## Task 4: `@hush/web` stub that consumes shared
