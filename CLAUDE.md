@@ -57,7 +57,7 @@ evals/           golden sets, metrics, results history
 docs/            PDPA mapping, content sources, error analysis, AI workflow log
 ```
 
-Tests sit next to source as `src/**/*.test.ts`. Integration tests use `*.int.test.ts`; e2e tests live in the Playwright folder.
+Tests sit next to source as `src/**/*.test.ts(x)`. Integration tests use `*.int.test.ts`; e2e tests live in the Playwright folder.
 
 ## Non-negotiable rules
 

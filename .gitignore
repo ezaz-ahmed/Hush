@@ -11,6 +11,3 @@ next-env.d.ts
 *.key
 coverage
 *.log
-
-
-./tasks/*

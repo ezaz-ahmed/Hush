@@ -142,10 +142,10 @@ import nextPlugin from '@next/eslint-plugin-next';
 3. A second `pnpm build` with no changes reports `FULL TURBO`.
 4. `apps/web/tsconfig.json` resolves to `strict: true` (check with `tsc --showConfig`).
 5. Renaming `service` in shared's `HealthStatus` makes `pnpm typecheck` fail in `@hush/web`.
-6. Adding `<img src="/x.png" />` to `page.tsx` makes `pnpm lint` report `@next/next/no-img-element`.
+6. Adding `<img src="/x.png" />` to `page.tsx` makes `pnpm lint` fail with `@next/next/no-img-element` (raised from Next's default `warn` to `error`).
 7. `apps/web` has no `tailwind.config.*` and no `src/index.ts`.
 
 ## Open Questions
 
 1. ~~**Node 26 support**~~ Resolved: Next 16.4.6 builds, typechecks and serves on Node 26.13.1 (Checkpoint A).
-2. **`next typegen` in typecheck:** Without it, a clean checkout fails `tsc` because `next-env.d.ts` references `.next/types`. The alternative is making `typecheck` depend on `build` in Turbo, which is slower. The plan is to use typegen.
+2. ~~**`next typegen` in typecheck**~~ Resolved: both. `typegen` lets `pnpm --filter @hush/web typecheck` work on a clean checkout, and `apps/web/turbo.json` makes the Turbo `typecheck` depend on `build` so `typegen` and `next build` never write `.next/types` concurrently. `build` is usually a cache hit.

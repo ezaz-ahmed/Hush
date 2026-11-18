@@ -11,6 +11,10 @@ export default defineConfig(
   {
     files: ['apps/web/**/*.{js,mjs,ts,tsx}'],
     ...nextPlugin.configs['core-web-vitals'],
+    rules: {
+      ...nextPlugin.configs['core-web-vitals'].rules,
+      '@next/next/no-img-element': 'error', // Next defaults to warn, which CI would not block
+    },
     // Absolute because Turbo runs eslint from inside apps/web.
     settings: { next: { rootDir: path.join(import.meta.dirname, 'apps/web') } },
   },

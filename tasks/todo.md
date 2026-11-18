@@ -54,7 +54,7 @@ Plan: [plan.md](plan.md) · Spec: [SPEC.md](../SPEC.md)
 **Acceptance criteria:**
 
 - [x] `@next/eslint-plugin-next` is a root dev dep, pinned to the same minor version as `next`.
-- [x] `eslint.config.js` has a block for `apps/web/**/*.{ts,tsx}` with `settings.next.rootDir` set to the absolute `apps/web` path.
+- [x] `eslint.config.js` has a block for `apps/web/**/*.{js,mjs,ts,tsx}` with `settings.next.rootDir` set to the absolute `apps/web` path.
 - [x] `pnpm lint` passes on the current code.
 
 **Verification:**
