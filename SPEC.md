@@ -56,7 +56,7 @@ Root commands don't change. The `@hush/api` scripts become:
 "start":     "node dist/main.js",   // local prod check only, not a Turbo task
 "lint":      "eslint .",
 "typecheck": "tsc --noEmit",
-"test":      "vitest run"
+"test":      "vitest run --dir src"   // src only: tsc also compiles tests into dist/
 ```
 
 ```bash

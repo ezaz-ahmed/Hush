@@ -3,13 +3,24 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "@hush/shared": "workspace:*"
+    "@hush/shared": "workspace:*",
+    "@nestjs/common": "12.5.1",
+    "@nestjs/core": "12.5.1",
+    "@nestjs/platform-fastify": "12.5.1",
+    "reflect-metadata": "0.2.2",
+    "rxjs": "7.8.2"
   },
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "tsc && (tsc --watch --preserveWatchOutput & node --watch dist/main.js)",
     "build": "tsc",
+    "start": "node dist/main.js",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --dir src"
+  },
+  "devDependencies": {
+    "@nestjs/testing": "12.5.1",
+    "@swc/core": "1.16.22",
+    "unplugin-swc": "2.0.0"
   }
 }
