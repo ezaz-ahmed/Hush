@@ -1,71 +1,70 @@
-# Implementation Plan: Monorepo Foundation
+# Implementation Plan: Scaffold Next.js Web App
 
-Source spec: [SPEC.md](../SPEC.md). Detailed tasks are in [todo.md](todo.md).
+Spec: [SPEC.md](../SPEC.md) · Tasks: [todo.md](todo.md)
 
 ## Overview
 
-This plan scaffolds a pnpm and Turborepo monorepo with three TypeScript stub workspaces (`@hush/shared`, `@hush/api` and `@hush/web`). All five Turbo tasks (dev, build, lint, typecheck, test) are wired up and pass. Node 26 and pnpm 12 are pinned, and the README documents the commands.
+Replace the `@hush/web` tsx stub with a Next.js 16 App Router app. The app gets Tailwind 4, Next's ESLint rules and a placeholder home page that renders `HealthStatus` from `@hush/shared`. The root commands (`pnpm dev/build/lint/typecheck/test`) keep working across all three workspaces.
 
 ## Dependency Graph
 
 ```
-root pins (package.json, pnpm-workspace.yaml, .nvmrc)
-   └── turbo.json + tsconfig.base.json
-          └── @hush/shared (build → dist/*.d.ts)
-                 ├── @hush/api  (imports shared)
-                 └── @hush/web  (imports shared)
-                        └── lint/format config (applies to all)
-                               └── README (documents final scripts)
+@hush/shared (dist, unchanged)
+    │
+    └── Task 1: Next app boots → layout + page + lib/status (imports shared)
+            │
+            ├── Task 2: Tailwind (needs layout.tsx to import globals.css)
+            ├── Task 3: Next ESLint rules (needs .tsx files to lint)
+            │
+            └── Task 4: README + spec success-criteria sweep (needs 1–3)
 ```
+
+Tasks 2 and 3 are independent of each other and can run in either order or in parallel.
 
 ## Architecture Decisions
 
-- **Each workspace is one vertical slice.** Every package task delivers `package.json`, `tsconfig`, source, a smoke test and the five scripts, and it is checked through Turbo. That way each task ends with a working repo.
-- **`turbo.json` gets all five tasks in Task 2.** Later tasks don't need to edit it, and a package that lacks a script is simply skipped by Turbo.
-- **`shared` is consumed as built `dist/`.** Its `exports` field points at `dist`, and `build`, `typecheck`, `test` and `dev` all depend on `^build`.
-- **One root ESLint flat config and one root Prettier config.** Each workspace's `lint` script runs `eslint .`, so the config isn't duplicated per package.
-- **No Corepack.** Node 26 doesn't bundle it, so pnpm is installed globally and the `packageManager` field pins the version.
-- **Dev deps:** shared tools (`turbo`, `typescript`, `eslint`, `typescript-eslint`, `prettier`, `vitest`, `tsx`, `@types/node`) are installed once at the root. Workspaces don't redeclare them, because pnpm makes root binaries visible to workspace scripts.
+- **Shared stays compiled ESM.** Next consumes `@hush/shared/dist` through its `exports` map, so `transpilePackages` isn't needed. Turbo's `^build` already orders the build.
+- **The web tsconfig extends the base** and overrides only the module and JSX settings Next needs. Strict mode is inherited, not repeated.
+- **Typecheck runs `next typegen` first.** This lets a clean checkout typecheck without a full `next build`.
+- **The Next ESLint plugin is configured in the root flat config,** scoped to `apps/web/**`. This keeps the single ESLint config from ticket #1.
+- **Status logic moves to `src/lib/status.ts`.** It's the only unit-tested code. Pages stay thin.
 
 ## Task List
 
-### Phase 1: Foundation
+### Phase 1: Risky foundation
 
-- [x] Task 1: Root workspace and Node/pnpm pins
-- [x] Task 2: `@hush/shared` built and tested through Turbo
+- [ ] Task 1: Next.js app boots, builds and renders shared status
 
-### Checkpoint A
+### Checkpoint A: Next runs on Node 26
 
-- [x] `pnpm build && pnpm typecheck && pnpm test` pass, and the second `pnpm build` reports FULL TURBO
+- [ ] `pnpm build && pnpm typecheck && pnpm test` pass from a clean state
+- [ ] `pnpm --filter @hush/web dev` serves "web: ok" at localhost:3000
+- [ ] Stop and resolve spec Open Question 1 if Next fails on Node 26
 
-### Phase 2: Apps
+### Phase 2: Styling and guardrails
 
-- [x] Task 3: `@hush/api` stub that consumes shared
-- [x] Task 4: `@hush/web` stub that consumes shared
+- [ ] Task 2: Tailwind 4 styles the placeholder
+- [ ] Task 3: Next ESLint rules apply to apps/web
 
-### Checkpoint B
+### Phase 3: Wrap-up
 
-- [x] The build order is shared → (api, web), `pnpm dev` runs both stubs, and all tasks are green
+- [ ] Task 4: README update and success-criteria sweep
 
-### Phase 3: Quality and Docs
+### Checkpoint B: Complete
 
-- [x] Task 5: ESLint and Prettier across the repo
-- [x] Task 6: README with setup and the root script reference
-
-### Checkpoint C (Complete)
-
-- [x] All eight success criteria in SPEC.md are verified
-- [ ] Human review
+- [ ] All seven spec success criteria verified
+- [ ] Human review, then open a PR into `main`
 
 ## Risks and Mitigations
 
-| Risk                                                                               | Impact      | Mitigation                                                                                                    |
-| ---------------------------------------------------------------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------- |
-| pnpm 12 changed workspace or `engine-strict` behaviour compared to pnpm 9/10       | Med         | **Hit and resolved in Task 1:** `.npmrc` was ignored, so `engineStrict: true` moved to `pnpm-workspace.yaml`. |
-| The `tsx watch` dev stub can't resolve `@hush/shared` before shared has been built | Low         | `dev` dependsOn `^build`                                                                                      |
-| ESLint's typed linting slows things down or needs per-package `tsconfig` wiring    | Low         | Start with non-type-aware `recommended` rules and add typed rules later if wanted                             |
-| NestJS later needs CJS output from shared                                          | Med (later) | Out of scope for now. This is open question 1 in SPEC.md.                                                     |
+| Risk                                                                    | Impact | Mitigation                                                                                                                           |
+| ----------------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------ |
+| Next 16.4 fails on Node 26                                              | High   | Task 1 runs first and Checkpoint A gates the rest. If it fails, stop and ask (spec Open Question 1).                                 |
+| Next rewrites `tsconfig.json` and drops inherited options               | Med    | After the first `next build`, diff the tsconfig and confirm `strict: true` with `tsc --showConfig`.                                  |
+| `noUncheckedIndexedAccess` or `verbatimModuleSyntax` clash with Next's generated types | Low | `skipLibCheck` is already on. Fix it in the web tsconfig only, and ask before touching `tsconfig.base.json`. |
+| Turbo caches `.next/cache` and the cache bloats                         | Low    | Use `outputs: [".next/**", "!.next/cache/**"]`.                                                                                     |
+| The root ESLint config can't resolve `@next/eslint-plugin-next`         | Low    | Install the plugin as a root dev dependency, next to the other ESLint packages.                                                     |
 
 ## Open Questions
 
-- NestJS and ESM (SPEC open question 1). It doesn't block this plan.
+- Spec Open Question 1 (Node 26): settled by Checkpoint A.
