@@ -1,0 +1,11 @@
+{
+  "$schema": "https://turborepo.com/schema.json",
+  "globalDependencies": ["tsconfig.base.json"],
+  "tasks": {
+    "build": { "dependsOn": ["^build"], "outputs": ["dist/**"] },
+    "typecheck": { "dependsOn": ["^build"] },
+    "lint": { "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/eslint.config.js"] },
+    "test": { "dependsOn": ["^build"] },
+    "dev": { "dependsOn": ["^build"], "cache": false, "persistent": true }
+  }
+}

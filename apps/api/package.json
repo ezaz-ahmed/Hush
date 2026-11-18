@@ -1,0 +1,15 @@
+{
+  "name": "@hush/api",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@hush/shared": "workspace:*"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --dir src"
+  }
+}
