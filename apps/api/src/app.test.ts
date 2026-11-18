@@ -5,6 +5,7 @@ import { Test } from '@nestjs/testing';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { AppModule } from './app.module.js';
+import { validateEnv } from './config/env.js';
 import { ZodValidationPipe } from './common/zod-validation.pipe.js';
 
 const echoSchema = z.object({ n: z.number() });
@@ -51,7 +52,8 @@ describe('app', () => {
   });
 
   it('injects ConfigService with the validated PORT', () => {
-    expect(app.get(ConfigService).get('PORT')).toBe(5555);
+    // The default itself is covered in env.test.ts; this only proves the validated value is wired in.
+    expect(app.get(ConfigService).get('PORT')).toBe(validateEnv(process.env).PORT);
   });
 
   it('GET /nope returns 404', async () => {
