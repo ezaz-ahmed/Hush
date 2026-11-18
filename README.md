@@ -40,9 +40,15 @@ pnpm turbo run dev --filter=@hush/web...
 
 ```
 apps/web         @hush/web     Next.js App Router + Tailwind, http://localhost:3000
-apps/api         @hush/api     API (stub; NestJS + Fastify planned)
+apps/api         @hush/api     NestJS on Fastify, http://localhost:5555
 packages/shared  @hush/shared  shared types and utilities, built to dist/
 ```
+
+## API
+
+`GET /health` returns `{ "ok": true, "service": "api" }`. `PORT` is the only env var so far (default `5555`, and the API refuses to start if it's invalid). CORS is off.
+
+The browser never calls the API directly. The web app proxies `/api/*` to it, so `http://localhost:3000/api/health` reaches `http://localhost:5555/health`. The proxy target is `API_URL` (default `http://localhost:5555`). Next bakes rewrites into the build, so `API_URL` must be set when running `next build`, not only at start.
 
 Apps depend on shared with `"@hush/shared": "workspace:*"`. Tests sit next to the source as `src/**/*.test.ts`.
 
