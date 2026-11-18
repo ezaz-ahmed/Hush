@@ -124,8 +124,8 @@ import nextPlugin from '@next/eslint-plugin-next';
 
 ## Testing Strategy
 
-- Vitest tests plain functions only. `src/lib/status.test.ts` checks that `status()` returns `{ ok: true, service: 'web' }`, which proves the `@hush/shared` import resolves at runtime.
-- There are no component render tests. RTL and jsdom are deliberately left out for now. `next build` proves that pages compile and prerender.
+- `src/lib/status.test.ts` checks that `status()` returns `{ ok: true, service: 'web' }`, which proves the `@hush/shared` import resolves at runtime.
+- `src/app/page.test.tsx` renders the server component with `react-dom/server`'s `renderToStaticMarkup` (already a dependency) and stubs `status()` to cover both the ok and down branches. RTL and jsdom are still left out. `next build` proves that pages compile and prerender.
 - Type safety is enforced by `pnpm typecheck`. Changing `HealthStatus` in shared must break the web typecheck.
 - No coverage threshold yet.
 
