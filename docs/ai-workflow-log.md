@@ -13,6 +13,13 @@ Format:
 - **Source:** commit sha(s) and/or PR number
 ```
 
+## 2026-11-19: Ingestion contract: fail closed, upsert by source, hash includes metadata (#19)
+
+- **Context:** Issue #19 asks for `pnpm ingest` that normalises, strips boilerplate and stores metadata, but leaves "boilerplate", re-runs and the NOT NULL `content_hash` undefined. The #17 comment asked whether #19 should also save MedlinePlus text.
+- **Decision:** Boilerplate is only frontmatter and `<!-- -->` comments; MedlinePlus attribution lines must stay. Frontmatter is parsed with `yaml` (2.9.1, maintained, no deps; gray-matter's last release was 2023) and a strict zod schema with `license` as an enum of the documented ids. Any invalid file fails the whole run before writing. Re-runs upsert on `source`; #22 adds hash-skip and removals. `content_hash` covers title, licence, url and the normalised body, so #22 won't skip metadata fixes. No production guard, unlike the seed: the knowledge base must reach production. MedlinePlus text goes to a new issue.
+- **Verified by:** `prepare.test.ts` (unit, including every real `content/` file), `ingest.int.test.ts` (Testcontainers), two manual `pnpm ingest` runs against the local Docker DB giving 6 rows each.
+- **Source:** PR for #19
+
 ## 2026-11-19: Fictional clinic content and frontmatter contract (#18)
 
 - **Context:** Issue #18 needs clinic pages for questions MedlinePlus cannot answer (fees, delivery, how consultations work). The user chose the name Hush Health, one file per topic in `content/clinic/`, YAML frontmatter, and fees in BDT.

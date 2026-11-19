@@ -21,7 +21,7 @@ A privacy-first RAG assistant answering patient FAQs for a fictional telehealth 
 - **Tests:** Vitest (unit, v8 coverage), Testcontainers with `pgvector/pgvector` (integration, `*.int.test.ts`). Planned: Playwright (e2e)
 - **Evals (planned):** `evals/` folder, run with `pnpm eval`
 
-Built today: the web home page showing API health, the API's `GET /health` with zod env validation and `ZodValidationPipe`, and shared health and error schemas. Anything marked planned does not exist yet; check the code before assuming a piece exists.
+Built today: the web home page showing API health, the API's `GET /health` with zod env validation and `ZodValidationPipe`, shared health and error schemas, and `pnpm ingest`, which loads `content/**/*.md` into `documents` (no chunks or embeddings yet). Anything marked planned does not exist yet; check the code before assuming a piece exists.
 
 ## Commands
 
@@ -36,6 +36,7 @@ pnpm test                # Vitest once everywhere
 pnpm test:coverage       # Vitest with v8 coverage, reports in <workspace>/coverage/
 pnpm test:int            # integration tests (Testcontainers); needs Docker, not run by `pnpm test`
 pnpm format              # Prettier write (format:check for CI)
+pnpm ingest              # upsert content/**/*.md into documents; uses apps/api/.env DATABASE_URL
 pnpm turbo run test --filter=@hush/api...   # one workspace + its deps
 
 # single test file / single test (build @hush/shared first if it changed)

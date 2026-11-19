@@ -14,6 +14,7 @@
     "test": "turbo run test",
     "test:coverage": "turbo run test:coverage",
     "test:int": "turbo run test:int",
+    "ingest": "pnpm --filter @hush/api ingest",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "prepare": "husky"
