@@ -1,225 +1,136 @@
-# Spec: Set up Drizzle ORM and migrations
+# Spec: Schema for documents, chunks, conversations and messages
 
 ## Objective
 
-Give the API a database client and a migration workflow that later tickets build on (tables in #13/#14, seed in #15, Testcontainers in #16). After this ticket the API connects to Postgres through an injectable Drizzle instance, and `drizzle-kit` can generate, apply and browse migrations against the Neon `dev` branch. No real tables yet.
+Add the RAG and chat tables that ingestion (#19–#22), retrieval (#25/#26) and the chat endpoint (#28) build on. After this ticket `apps/api/src/database/schema.ts` defines four tables, and one drizzle-kit migration creates them with an HNSW index on embeddings and a GIN index on full-text search. No code reads or writes these tables yet.
 
-**Acceptance criteria (from issue #12):**
+**Acceptance criteria (from issue #13):**
 
-- [ ] Drizzle ORM + drizzle-kit in `apps/api`.
-- [ ] Migration scripts: generate, migrate, studio (`db:generate`, `db:migrate`, `db:studio` in `apps/api/package.json`).
-- [ ] **Manual, verified by the user:** migrations run against the Neon `dev` branch. Agents have no Neon credentials, so the implementer stops at "scripts work without a DB where possible" and the user runs `pnpm --filter @hush/api db:migrate` with their own `apps/api/.env` (see Success criteria).
-- [ ] Database module injectable in NestJS: `DatabaseModule` provides a Drizzle instance under a `DB` token and closes the pool on shutdown.
+- [ ] `documents` (source, license, url, content hash)
+- [ ] `chunks` (document_id, text, heading path, embedding vector, tsvector)
+- [ ] `conversations`, `messages` (role, content, citations, guardrail decision)
+- [ ] HNSW index on embeddings, GIN index on tsvector
+- [ ] **Manual, verified by the user:** the migration applies cleanly to the Neon `dev` branch (agents have no Neon credentials).
 
-**Out of scope:** any table or schema content (#13/#14), repository layer, field-level encryption, seed scripts and the "refuse production" guard (#15), Testcontainers and integration tests (#16), production branch and migration workflow (#82), running migrations at app startup, a DB health check on `GET /health`, CI changes, root-level `db:*` scripts, the web app.
+**Out of scope:** `users`, `consents`, `audit_logs`, `deletion_requests` (#14), so `conversations` has no `user_id` yet (FK added in #14, see Decisions); field-level encryption and the message repository layer (#45); any code that reads or writes these tables (ingestion, retrieval, chat); seed data (#15); Testcontainers and integration tests (#16); zod schemas in `@hush/shared`; README changes.
 
-## Not high-risk
+## Risk
 
-No redaction, consent, audit, retention, guardrail or prompt changes. Rule 8 applies: no real connection strings in code, tests, docs, spec, commits or PR. Test fixtures use obviously fake URLs (`postgresql://test:test@localhost:5432/hush_test`). Env errors stay names-only (`parseEnv`). drizzle-kit prints the host it connects to; that is the user's terminal, not a log, so acceptable.
+Not a code change to redaction, consent, audit, retention, guardrails or prompts, but it **creates the storage** that several of them rely on, so the PR calls it out:
+
+- **Message content (encryption rule).** CLAUDE.md says message content is encrypted at field level and only touched through the repository layer. This ticket only creates the column. Decision: `messages.content` is `text NOT NULL`, documented in the schema as "ciphertext once #45 lands; write only through the repository". #45 (AES-GCM, base64 output) stores ciphertext in the same `text` column, so it needs no migration. Nothing writes messages in this ticket, so no plaintext is ever stored. **#45 must land before #28 writes real messages**; the PR says so.
+- **Prompt version.** `messages.prompt_version` is required for assistant messages via a check constraint (`role <> 'assistant' OR prompt_version IS NOT NULL`). Refusal and emergency templates are versioned files too, so the rule holds for LLM-free replies.
+- **Deletion (future privacy work).** `chunks.document_id` and `messages.conversation_id` are `ON DELETE CASCADE`, so deleting a conversation leaves no messages behind. The user → conversation link and its cascade come with #14.
+- **Guardrail decision** is stored as an enum for later logging (#54). No guardrail logic here.
 
 ## Design
 
-### New dependencies (`apps/api`)
+### Assumptions
 
-| Package       | Version   | Kind | Why                                                                          |
-| ------------- | --------- | ---- | ---------------------------------------------------------------------------- |
-| `drizzle-orm` | `0.45.4`  | dep  | The ORM (issue requirement). Latest stable; 1.0 is still `rc`/`beta`.        |
-| `pg`          | `8.23.1`  | dep  | Driver for both the app and drizzle-kit (see below). No install script.      |
-| `drizzle-kit` | `0.31.11` | dev  | Migration CLI (issue requirement). Pairs with `drizzle-orm` 0.45.            |
-| `@types/pg`   | `8.23.1`  | dev  | `pg` ships no types; strict TS needs them. `drizzle-orm` lists it as a peer. |
+1. **Embedding dimension 1024.** No embedding provider exists yet (#21). 1024 is the default for Voyage (`voyage-3.5`, the provider Anthropic recommends), and OpenAI `text-embedding-3-*` can return 1024 through its `dimensions` parameter, so either choice in #21 fits without a migration. It is well under pgvector's 2000-dimension HNSW limit. Changing it later means a migration plus re-embedding everything, which is cheap at this content size.
+2. **Cosine distance** (`vector_cosine_ops`), matching #25 ("cosine similarity search").
+3. **English full-text config** (`to_tsvector('english', text)`). The content is English.
+4. Ids are `uuid` with `gen_random_uuid()` (built into Postgres 13+, no extension).
 
-Checked with `pnpm view <pkg> version` on 2026-11-19. Exact pins, like the rest of `apps/api`. `drizzle-kit` pulls in `esbuild` (already in `pnpm-workspace.yaml` `allowBuilds`) and the deprecated `@esbuild-kit/esm-loader`; that is drizzle-kit's own dependency, dev-only, and accepted. Implementer confirms `pnpm install` needs no `allowBuilds` change.
+### Tables
 
-**Driver: `pg` (node-postgres).** Why not the others:
+`apps/api/src/database/schema.ts` (one file; #14 may split it when it adds more):
 
-- `@neondatabase/serverless`: built for edge/serverless (HTTP/WebSocket). The API is a long-lived Node process, and integration tests (#16) need a driver that talks plain TCP to a Testcontainers Postgres. `pg` works on both Neon and plain Postgres with no code switch.
-- `postgres` (postgres.js): also fine technically, but it is on a fresh 4.x major, and `pg` is the most used and best documented Drizzle + drizzle-kit pairing. One driver for app and CLI keeps the dependency count at one.
+| Table           | Column               | Type                                                                                        | Notes                                                                                        |
+| --------------- | -------------------- | ------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `documents`     | `id`                 | uuid PK                                                                                     |                                                                                              |
+|                 | `source`             | text NOT NULL **UNIQUE**                                                                    | repo-relative content path, e.g. `content/hair-loss/finasteride.md`. Re-ingest key (#22)     |
+|                 | `title`              | text NOT NULL                                                                               | not in the issue; citations (#33) need something to show                                     |
+|                 | `license`            | text NOT NULL                                                                               | e.g. `CC-BY-4.0`, `original`                                                                 |
+|                 | `url`                | text NULL                                                                                   | null for the fictional clinic's own content                                                  |
+|                 | `content_hash`       | text NOT NULL                                                                               | sha256 hex of the normalised content (#22 compares it)                                       |
+|                 | `created_at`         | timestamptz NOT NULL default `now()`                                                        |                                                                                              |
+| `chunks`        | `id`                 | uuid PK                                                                                     |                                                                                              |
+|                 | `document_id`        | uuid NOT NULL → `documents.id` ON DELETE CASCADE                                            | btree index (Postgres does not index FKs; cascades and joins need it)                        |
+|                 | `text`               | text NOT NULL                                                                               |                                                                                              |
+|                 | `heading_path`       | text[] NOT NULL default `'{}'`                                                              | e.g. `{Finasteride, Side effects}`                                                           |
+|                 | `embedding`          | vector(1024) NOT NULL                                                                       | HNSW index, `vector_cosine_ops`                                                              |
+|                 | `tsv`                | tsvector, generated always as `to_tsvector('english', text)` stored                         | GIN index. Postgres keeps it in sync; the app never writes it                                |
+| `conversations` | `id`                 | uuid PK                                                                                     |                                                                                              |
+|                 | `created_at`         | timestamptz NOT NULL default `now()`                                                        |                                                                                              |
+| `messages`      | `id`                 | uuid PK                                                                                     |                                                                                              |
+|                 | `conversation_id`    | uuid NOT NULL → `conversations.id` ON DELETE CASCADE                                        | btree index                                                                                  |
+|                 | `role`               | enum `message_role` (`user`, `assistant`)                                                   | no `system`: system prompts are files, not stored messages                                   |
+|                 | `content`            | text NOT NULL                                                                               | ciphertext after #45 (see Risk)                                                              |
+|                 | `citations`          | jsonb NOT NULL default `'[]'`, typed `{ chunkId, documentId, source }[]` (all `string`)     | no FK; `documentId`/`source` keep old citations resolvable after re-ingest. Validated by #29 |
+|                 | `guardrail_decision` | enum `guardrail_decision` (`allowed`, `emergency`, `diagnosis`, `dosage`, `off_topic`) NULL | values from #49's classifier. Set on user messages; null on assistant messages               |
+|                 | `prompt_version`     | text NULL, check: required when `role = 'assistant'`                                        | see Risk                                                                                     |
+|                 | `created_at`         | timestamptz NOT NULL default `clock_timestamp()`                                            | not `now()`: a user and assistant message saved in one transaction would tie                 |
 
-Neon's pooled endpoint is PgBouncer in transaction mode. node-postgres only uses unnamed prepared statements unless a `name` is given, and Drizzle does not name them, so the pooled URL works for runtime queries.
+Deliberately left out: `updated_at` columns, chunk position/ordinal, token counts, embedding model name, soft deletes. Add when a ticket needs them.
 
-### Env change
+### Drizzle specifics (checked against installed `drizzle-orm` 0.45.4 types)
 
-| Name                    | Before   | After        | Read by                        |
-| ----------------------- | -------- | ------------ | ------------------------------ |
-| `DATABASE_URL`          | optional | **required** | API runtime (`DatabaseModule`) |
-| `DATABASE_URL_UNPOOLED` | optional | optional     | `drizzle.config.ts` only       |
+- `vector('embedding', { dimensions: 1024 })` is built in (`pg-core/columns/vector_extension`).
+- `index().using('hnsw', t.embedding.op('vector_cosine_ops'))` and `index().using('gin', t.tsv)` are typed (`PgIndexMethod` includes `hnsw`, `PgIndexOpClass` includes `vector_cosine_ops`).
+- There is no built-in `tsvector` column, so a three-line `customType<{ data: string }>({ dataType: () => 'tsvector' })` plus `.generatedAlwaysAs(sql\`to_tsvector('english', ${t.text})\`)`. If drizzle-kit generates bad SQL for this, the implementer stops and reports rather than hand-editing the migration.
+- `pgEnum` for `message_role` and `guardrail_decision`; `check()` for the prompt version rule; `jsonb().$type<Citation[]>()` with an exported `type Citation = { chunkId: string; documentId: string; source: string }`.
 
-- `DATABASE_URL` becomes required in `apps/api/src/config/env.ts`: the API cannot work without it, so it fails fast at startup with `Invalid env: DATABASE_URL`. The `shortcut:` comment is removed.
-- `DATABASE_URL_UNPOOLED` stays optional in the API schema (still format-checked if set): the API never reads it. drizzle-kit reads it directly (see below). A one-line comment says so.
-- `''` still counts as unset (existing `blankIsUnset`), so `DATABASE_URL=` now fails as missing.
-- `apps/api/.env.example`: uncomment both lines (placeholders unchanged), reword the header: `DATABASE_URL` required, `DATABASE_URL_UNPOOLED` needed for `db:migrate` / `db:studio`.
+Migration `0001_<name>.sql` is generated by `pnpm --filter @hush/api db:generate --name rag_and_chat_tables` and committed unedited. It relies on `0000_enable_pgvector` for the `vector` type.
 
-**Impact on tests and CI (no real DB anywhere):**
+### `@hush/shared`: nothing
 
-- `pg.Pool` is lazy: creating it opens no connection, nothing queries during tests, so a fake URL is enough.
-- `apps/api/vitest.config.ts` gets `test.env: { DATABASE_URL: 'postgresql://test:test@localhost:5432/hush_test' }` so `app.test.ts` (which boots `AppModule`) passes in CI and on machines with no `.env`. `process.env` beats `.env` in `ConfigModule`, so a developer's real Neon URL is never used by tests.
-- `ci.yml` unchanged; `build` does not start the app.
-- `pnpm dev` / `pnpm start` without `apps/api/.env` now fail fast with `Invalid env: DATABASE_URL`. Intended; README says so.
-
-### Folder layout
-
-```
-apps/api/
-  drizzle.config.ts          drizzle-kit config (not under src, like vitest.config.ts)
-  drizzle/                   generated migrations (drizzle-kit default `out`), committed
-    0000_enable_pgvector.sql
-    meta/_journal.json, meta/0000_snapshot.json
-  src/database/
-    schema.ts                empty barrel; #13/#14 add tables here
-    database.module.ts       DatabaseModule + DB token + Db type
-    database.module.test.ts
-```
-
-`apps/api/drizzle` goes into `.prettierignore` so generated SQL and snapshots stay byte-exact with what drizzle-kit wrote.
-
-### Initial migration: enable pgvector
-
-#11 enabled `vector` by hand on both Neon branches. A Testcontainers `pgvector/pgvector` database does not have it enabled, so the migrations should be the source of truth. One custom migration:
-
-```bash
-pnpm --filter @hush/api exec drizzle-kit generate --custom --name enable_pgvector
-```
-
-then fill the generated file with:
-
-```sql
-CREATE EXTENSION IF NOT EXISTS vector;
-```
-
-Idempotent, so it is a no-op on Neon branches that already have it. This is also the migration the user applies to `dev` to verify the acceptance criterion.
-
-### `drizzle.config.ts`
-
-```ts
-import { existsSync } from 'node:fs';
-import { defineConfig } from 'drizzle-kit';
-
-// drizzle-kit does not load .env; process env wins over the file.
-if (existsSync('.env')) process.loadEnvFile('.env');
-
-export default defineConfig({
-  dialect: 'postgresql',
-  schema: './src/database/schema.ts',
-  out: './drizzle',
-  // Direct (unpooled) URL: migrations need a session, not PgBouncer transaction mode.
-  dbCredentials: { url: process.env.DATABASE_URL_UNPOOLED ?? '' },
-  strict: true,
-  verbose: true,
-});
-```
-
-- Uses Node's built-in `process.loadEnvFile` (no `dotenv`). Scripts run with cwd `apps/api`, so `.env` resolves to `apps/api/.env`.
-- `generate` must work with no `.env` and no URL (it only diffs schema files). `migrate` / `studio` without `DATABASE_URL_UNPOOLED` must fail with an error that names the variable and prints no value; if drizzle-kit's own error for `url: ''` is unclear, throw `new Error('Missing env: DATABASE_URL_UNPOOLED')` only when the command is not `generate`. Implementer checks which and keeps the simpler one that meets this.
-- Not covered by `tsc` (outside `src`, same as `vitest.config.ts`); ESLint still lints it.
-
-### Scripts (`apps/api/package.json`)
-
-```json
-"db:generate": "drizzle-kit generate",
-"db:migrate": "drizzle-kit migrate",
-"db:studio": "drizzle-kit studio"
-```
-
-Run from root as `pnpm --filter @hush/api db:<name>`. Not Turbo tasks: they talk to a remote DB and must not be cached or run in CI.
-
-### `DatabaseModule`
-
-```ts
-import { Inject, Module, type OnApplicationShutdown } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
-import { Pool } from 'pg';
-import type { Env } from '../config/env.js';
-import * as schema from './schema.js';
-
-export const DB = Symbol('DB');
-export type Db = NodePgDatabase<typeof schema>;
-
-@Module({
-  providers: [
-    {
-      provide: DB,
-      inject: [ConfigService],
-      useFactory: (config: ConfigService<Env, true>): Db =>
-        drizzle({
-          client: new Pool({ connectionString: config.get('DATABASE_URL', { infer: true }) }),
-          schema,
-        }),
-    },
-  ],
-  exports: [DB],
-})
-export class DatabaseModule implements OnApplicationShutdown {
-  constructor(@Inject(DB) private readonly db: Db) {}
-
-  async onApplicationShutdown(): Promise<void> {
-    await this.db.$client.end();
-  }
-}
-```
-
-- Not `@Global`: feature modules import `DatabaseModule` explicitly; Nest keeps one instance. `AppModule` imports it so startup wires it.
-- Consumers inject with `@Inject(DB) db: Db`.
-- `main.ts` adds `app.enableShutdownHooks()` so SIGTERM/SIGINT reach `onApplicationShutdown` (Fastify adapter supports it; `app.close()` in tests already triggers it).
-- No pool tuning, no SSL options: Neon URLs carry `sslmode=require`; defaults are fine until measured.
-- Exact shape (e.g. `drizzle({ client, schema })` with an empty schema) is checked against the installed `drizzle-orm` 0.45 types by the implementer; adjust only what the types require.
-
-### README
-
-Update the "Database (Neon)" section: drop "Nothing reads it yet"; `DATABASE_URL` is required to start the API; add a short "Migrations" list (`db:generate`, `db:migrate`, `db:studio`, which URL each uses, migrations live in `apps/api/drizzle`, never edit an applied migration). Update the "API" paragraph's env sentence.
+Citation, role and guardrail decision types are only used by the API's schema today. Zod schemas for them go into `@hush/shared` when they cross the wire (citations in #28/#29/#33). The enum values are written once in `schema.ts`.
 
 ## Commands
 
 ```bash
-pnpm --filter @hush/api add drizzle-orm@0.45.4 pg@8.23.1
-pnpm --filter @hush/api add -D drizzle-kit@0.31.11 @types/pg@8.23.1
-pnpm --filter @hush/api exec drizzle-kit generate --custom --name enable_pgvector
-pnpm --filter @hush/api db:generate        # must succeed with no .env ("No schema changes")
-pnpm --filter @hush/api exec vitest run src/config/env.test.ts src/database/database.module.test.ts src/app.test.ts
+pnpm --filter @hush/api db:generate --name rag_and_chat_tables   # no .env needed
+pnpm --filter @hush/api db:generate        # rerun: must report no schema changes
+pnpm --filter @hush/api exec drizzle-kit check
+pnpm --filter @hush/api exec vitest run src/database/schema.test.ts
 pnpm format && pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build
 
-# Manual, user only (needs apps/api/.env pointing at Neon dev):
+# Manual, user only (apps/api/.env pointing at Neon dev):
 pnpm --filter @hush/api db:migrate
-pnpm --filter @hush/api db:studio
 ```
+
+`drizzle-kit check` must not need a DB URL; if it trips the config's `Missing env` guard, the implementer reports it and does not change the guard without asking.
 
 ## Testing strategy
 
-Tests first. No test opens a real connection.
+No database is available until #16, so this ticket tests the schema definition, not behaviour. Tests first.
 
-1. `env.test.ts`
-   - `validateEnv({})` now throws exactly `Invalid env: DATABASE_URL`. This replaces the "defaults PORT to 5555" case, which is behaviour this ticket changes on purpose; the PORT default is re-asserted with a valid `DATABASE_URL` present.
-   - `DATABASE_URL: ''` throws `Invalid env: DATABASE_URL` (blank counts as missing).
-   - Existing accept/reject/no-leak cases keep running for both vars; their expected objects gain the required `DATABASE_URL`. `DATABASE_URL_UNPOOLED` keeps its "empty is unset" case.
-2. `database.module.test.ts`
-   - Compiling a testing module with `ConfigModule.forRoot({ validate: validateEnv })` (fake URL via env) + `DatabaseModule` resolves `DB`, and the instance's `$client` is a `pg.Pool` built from `DATABASE_URL` (check `$client.options.connectionString`). No query is run.
-   - `app.close()` calls `end()` on the pool once (spy on `Pool.prototype.end` or the instance).
-3. `app.test.ts`
-   - Keeps passing unchanged thanks to `vitest.config.ts` `test.env`.
-   - New: boot fails with exactly `Invalid env: DATABASE_URL` when it is stubbed to `''` (same pattern as the PORT test).
+`apps/api/src/database/schema.test.ts`, using `getTableConfig` from `drizzle-orm/pg-core`:
 
-`drizzle.config.ts` and the scripts are verified by the commands above (generate without a DB) and the user's manual run, not by unit tests.
+1. `chunks.document_id` and `messages.conversation_id` foreign keys have `onDelete: 'cascade'`.
+2. `chunks` has an `hnsw` index on `embedding` with `vector_cosine_ops`, and a `gin` index on `tsv`.
+3. `embedding` has 1024 dimensions; `tsv` is generated (`generated` set, not insertable).
+4. `documents.source` is unique.
+5. `messages` has the prompt-version check constraint; enum values match the lists above.
+6. `messages.citations` is `jsonb`, not null, default `'[]'`, and its select type is `Citation[]` with `chunkId`, `documentId` and `source` (`expectTypeOf`).
+
+Plus the reviewed migration SQL (read in the PR), the no-drift rerun of `db:generate`, and `drizzle-kit check`. Real inserts, cascades, the check constraint and an HNSW query are proven against a real DB in #16 (the PR notes this as follow-up).
 
 ## Boundaries
 
-- Always: fake URLs only in tests and docs; names-only env errors; migrations generated by drizzle-kit and committed; full CLAUDE.md commit sequence.
-- Ask first: any dependency beyond the four above; running anything against Neon; adding tables; touching CI or `turbo.json`; making the API run migrations at startup.
-- Never: real connection strings in code, tests, docs, commits or PR; tests or CI that need a reachable database; editing a migration after it has been applied to Neon; Express types.
+- Always: migrations generated by drizzle-kit and committed unedited; fake URLs only; full CLAUDE.md commit sequence.
+- Ask first: any new dependency; changing the embedding dimension; editing `0000`; adding columns or tables beyond this spec; touching `drizzle.config.ts`; anything that writes messages.
+- Never: code that stores message content (before #45); hand-edited generated migrations; running anything against Neon; tests that need a database.
 
 ## Success criteria
 
-- The four dependencies are installed at the pinned versions; lockfile updated.
-- `db:generate` runs with no `.env`; `drizzle/0000_enable_pgvector.sql` contains only `CREATE EXTENSION IF NOT EXISTS vector;` plus the journal/snapshot.
-- `DATABASE_URL` is required; `DatabaseModule` provides `DB` and closes the pool on shutdown; `main.ts` enables shutdown hooks.
-- New and updated tests pass; the full gate sequence passes with no `apps/api/.env` present.
-- **Manual, user:** with `apps/api/.env` pointing at Neon `dev`, `pnpm --filter @hush/api db:migrate` succeeds; a second run is a no-op; `SELECT * FROM drizzle.__drizzle_migrations;` shows one row; `db:studio` opens. Then `pnpm --filter @hush/api dev` starts and `GET /health` still returns ok. The PR description has an unticked checkbox for this until the user confirms.
+- `schema.ts` defines the four tables, two enums and the indexes above; `drizzle/0001_*.sql` and its snapshot are committed.
+- `db:generate` rerun reports no changes; `drizzle-kit check` passes.
+- `schema.test.ts` passes; the full gate sequence passes with no `apps/api/.env`.
+- `DatabaseModule` tests still pass (the `Db` type now carries the real schema).
+- **Manual, user:** `db:migrate` on Neon `dev` succeeds and `\d chunks` shows the HNSW and GIN indexes. The PR has an unticked checkbox for this until the user confirms.
+
+## Decisions (resolved open questions)
+
+1. **Embedding dimension 1024.** Confirmed.
+2. **Message encryption:** plain `text` column now; #45 stores base64 AES-GCM ciphertext in it with no migration, and lands before #28 writes messages. Confirmed.
+3. **Citations** store `{ chunkId, documentId, source }`, so old citations still resolve to a document after re-ingestion deletes and recreates chunks. Confirmed.
+4. **`documents.title`:** keep.
+5. **`conversations.user_id`:** FK (NOT NULL, ON DELETE CASCADE) is added in #14; out of scope here.
+6. **`tsv`** covers chunk text only.
+7. **`guardrail_decision`** enum stays as specified; later checks (e.g. #52) may extend it.
 
 ## Open questions
 
-None blocking. Decisions you may override:
-
-1. `pg` over `@neondatabase/serverless` / `postgres`.
-2. `DATABASE_URL` required; `DATABASE_URL_UNPOOLED` stays optional in the API schema (only drizzle-kit needs it).
-3. A pgvector migration as `0000`, even though Neon already has the extension.
-4. Migrations in `apps/api/drizzle/` (drizzle-kit default) and excluded from Prettier.
-5. `DatabaseModule` not global.
+None.
