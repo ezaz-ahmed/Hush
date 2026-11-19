@@ -13,6 +13,13 @@ Format:
 - **Source:** commit sha(s) and/or PR number
 ```
 
+## 2026-11-19: Knowledge base uses MedlinePlus only (#17)
+
+- **Context:** Issue #17 suggested MedlinePlus, NHS (OGL) and own content. The fictional clinic is in Bangladesh. The NHS terms turned out to require a 7-day refresh for unchanged copies, or a separate attribution line plus an "as at" date for adapted ones. WHO content is CC BY-NC-SA (non-commercial, share-alike). The user asked whether making the repo private or gitignoring `content/` would avoid licensing; that would break CI, evals and fresh clones, and hide the portfolio.
+- **Decision:** MedlinePlus only, plus own content (#18) for anything local to Bangladesh (emergency number 999). Use only the NLM-written Summary section of health topic pages: no `/ency/` (A.D.A.M.), no `/druginfo/`, no images or linked articles. Skip any page that states a dose (rule 5). Licence ids `LicenseRef-PublicDomain-USGov` and `LicenseRef-Hush-Original` go into `documents.license`. This ticket lists pages only; saving their text into `content/` has no owner yet and is flagged on #19.
+- **Verified by:** MedlinePlus "Using content" and NHS terms pages read on 2026-11-19; all 8 chosen Summary sections checked for doses (none found).
+- **Source:** `docs/content-sources.md`, PR for #17
+
 ## 2026-11-19: Local Docker DB and Testcontainers integration tests (#16)
 
 - **Context:** Issue #16 adds `docker-compose.yml`, `startTestDb()` and `pnpm test:int`. The spec draft assumed Postgres 17 and no `allowBuilds` changes. Neon reported `18.7`. pnpm 12 failed `install --frozen-lockfile` with `ERR_PNPM_IGNORED_BUILDS` for `cpu-features`, `protobufjs` and `ssh2`, pulled in by testcontainers. A local container already held port 5432.
