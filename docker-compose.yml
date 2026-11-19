@@ -1,0 +1,22 @@
+# Local dev only. Credentials are fake and the port is bound to localhost.
+# Image tag must match PGVECTOR_IMAGE in apps/api/src/database/testing/test-db.ts.
+# Host port is overridable (HUSH_DB_PORT) when 5432 is taken.
+services:
+  postgres:
+    image: pgvector/pgvector:0.8.7-pg18
+    environment:
+      POSTGRES_USER: hush
+      POSTGRES_PASSWORD: hush_local_dev_only
+      POSTGRES_DB: hush
+    ports:
+      - '127.0.0.1:${HUSH_DB_PORT:-5432}:5432'
+    volumes:
+      # pg18 images keep data under /var/lib/postgresql (not /var/lib/postgresql/data).
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U hush -d hush']
+      interval: 2s
+      timeout: 5s
+      retries: 15
+volumes:
+  pgdata:

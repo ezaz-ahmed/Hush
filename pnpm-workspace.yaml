@@ -4,4 +4,8 @@ packages:
 allowBuilds:
   '@swc/core': true
   esbuild: true
+  # Pulled in by testcontainers; not needed with a local Docker socket (#16).
+  cpu-features: false
+  protobufjs: false
+  ssh2: false
 engineStrict: true

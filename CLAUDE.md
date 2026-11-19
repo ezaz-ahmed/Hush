@@ -18,7 +18,7 @@ A privacy-first RAG assistant answering patient FAQs for a fictional telehealth 
 - **API:** `apps/api` (`@hush/api`), NestJS on the **Fastify** adapter (`@nestjs/platform-fastify`)
 - **Shared:** `packages/shared` (`@hush/shared`), types and zod schemas, built to `dist/`
 - **Database (planned):** Postgres on Neon with pgvector, Drizzle ORM and drizzle-kit migrations
-- **Tests:** Vitest (unit, v8 coverage). Planned: Testcontainers with `pgvector/pgvector` (integration), Playwright (e2e)
+- **Tests:** Vitest (unit, v8 coverage), Testcontainers with `pgvector/pgvector` (integration, `*.int.test.ts`). Planned: Playwright (e2e)
 - **Evals (planned):** `evals/` folder, run with `pnpm eval`
 
 Built today: the web home page showing API health, the API's `GET /health` with zod env validation and `ZodValidationPipe`, and shared health and error schemas. Anything marked planned does not exist yet; check the code before assuming a piece exists.
@@ -34,12 +34,13 @@ pnpm lint                # ESLint everywhere
 pnpm typecheck           # tsc --noEmit everywhere
 pnpm test                # Vitest once everywhere
 pnpm test:coverage       # Vitest with v8 coverage, reports in <workspace>/coverage/
+pnpm test:int            # integration tests (Testcontainers); needs Docker, not run by `pnpm test`
 pnpm format              # Prettier write (format:check for CI)
 pnpm turbo run test --filter=@hush/api...   # one workspace + its deps
 
 # single test file / single test (build @hush/shared first if it changed)
-pnpm --filter @hush/api exec vitest run src/index.test.ts
-pnpm --filter @hush/api exec vitest run -t "test name"
+pnpm --filter @hush/api exec vitest run --project unit src/index.test.ts
+pnpm --filter @hush/api exec vitest run --project unit -t "test name"
 ```
 
 ### Monorepo gotchas

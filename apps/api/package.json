@@ -20,8 +20,9 @@
     "start": "node dist/main.js",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --dir src",
-    "test:coverage": "vitest run --dir src --coverage",
+    "test": "vitest run --dir src --project unit",
+    "test:coverage": "vitest run --dir src --project unit --coverage",
+    "test:int": "vitest run --dir src --project int",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
@@ -30,6 +31,7 @@
   "devDependencies": {
     "@nestjs/testing": "12.5.1",
     "@swc/core": "1.16.22",
+    "@testcontainers/postgresql": "12.2.1",
     "@types/pg": "8.23.1",
     "drizzle-kit": "0.31.11",
     "unplugin-swc": "2.0.0"
