@@ -13,6 +13,13 @@ Format:
 - **Source:** commit sha(s) and/or PR number
 ```
 
+## 2026-11-19: Drizzle on `pg`, DATABASE_URL required, agents never touch the real `.env` (#12)
+
+- **Context:** Issue #12 adds Drizzle ORM, drizzle-kit migrations and a Nest `DatabaseModule`. The developer's `apps/api/.env` holds real Neon `dev` URLs, and `drizzle.config.ts` loads it, so an agent checking `db:migrate` could have migrated Neon by accident.
+- **Decision:** Driver is `pg`, which works on both Neon and plain Postgres (for future Testcontainers). `DATABASE_URL` is now required at API startup, and tests get a fake URL via `vitest.config.ts` `test.env` (the pool is lazy, so no connection is made). `DATABASE_URL_UNPOOLED` stays optional and is read only by drizzle-kit. `migrate` and `studio` now throw `Missing env: DATABASE_URL_UNPOOLED`, because drizzle-kit's own error didn't name the variable. Agents ran every migrate/studio check with `DATABASE_URL_UNPOOLED=` set empty (`process.loadEnvFile` doesn't overwrite a var that's already set) and never read `.env`. Running the migration against Neon is left to the user by hand. Added on review: a pool `'error'` listener that logs only the pg error code, since Neon closing idle connections would otherwise crash the process.
+- **Verified by:** env, app and database module tests written first; full gate passing; review, plus code, security and test ship reviews, all GO.
+- **Source:** `docs/specs/12-set-up-drizzle-orm-and-migrations.md` (after retirement), PR for #12
+
 ## 2026-11-19: Neon set up by hand; database URLs optional until #12 (#11)
 
 - **Context:** Issue #11 asks for a Neon project with `main` and `dev` branches and pgvector enabled. Agents have no Neon credentials, and creating cloud resources is the user's call.

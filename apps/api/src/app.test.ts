@@ -90,4 +90,17 @@ describe('startup env validation', () => {
     expect(err).toBeInstanceOf(Error);
     expect((err as Error).message).toBe('Invalid env: PORT');
   });
+
+  it('refuses to load the app module when DATABASE_URL is missing, naming it without a value', async () => {
+    vi.stubEnv('DATABASE_URL', '');
+    vi.resetModules();
+    const err = await import('./app.module.js')
+      .then(({ AppModule: Fresh }) => Test.createTestingModule({ imports: [Fresh] }).compile())
+      .then(
+        () => undefined,
+        (e: unknown) => e,
+      );
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toBe('Invalid env: DATABASE_URL');
+  });
 });
