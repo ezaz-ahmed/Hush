@@ -10,7 +10,7 @@ Hush answers only from its knowledge base and shows retrieved text as cited answ
 | Own content (#18) | Ours                           | `LicenseRef-Hush-Original`      | None                                                            |
 
 - **MedlinePlus:** NLM-written content is not copyrighted under US law and may be reproduced and redistributed freely; NLM asks that MedlinePlus is credited as the source. See [Using MedlinePlus content](https://medlineplus.gov/about/using/usingcontent/).
-- **Own content:** written for Hush. Covers anything local to the fictional clinic in Bangladesh (emergency number 999, how the service works).
+- **Own content:** written for Hush. Covers anything local to the fictional clinic in Bangladesh (emergency number 999, how the service works). Files live in `content/clinic/`, each with frontmatter `title` and `license: LicenseRef-Hush-Original`.
 - **Identifiers:** SPDX has no public-domain id, so both use SPDX's `LicenseRef-` convention for custom ids. These exact strings go into `documents.license`.
 
 Other sources (NHS, WHO, Bangladeshi government sites) were not used: their terms add attribution, refresh or non-commercial conditions, or state no reuse licence at all. MedlinePlus covers every topic.

@@ -13,6 +13,13 @@ Format:
 - **Source:** commit sha(s) and/or PR number
 ```
 
+## 2026-11-19: Fictional clinic content and frontmatter contract (#18)
+
+- **Context:** Issue #18 needs clinic pages for questions MedlinePlus cannot answer (fees, delivery, how consultations work). The user chose the name Hush Health, one file per topic in `content/clinic/`, YAML frontmatter, and fees in BDT.
+- **Decision:** Six files (`scope`, `overview`, `services`, `consultations`, `delivery`, `pricing-faq`). Each starts with frontmatter `title` and `license: LicenseRef-Hush-Original`; #19 must read these rather than derive them from the heading or folder, and leaves `url` null. Clinic content names no medicines, stricter than the MedlinePlus rule, because clinic text reads as the clinic's own recommendation. Fees appear only in `pricing-faq.md` and other files refer to it, so retrieval never cites two files that disagree. Every section that mentions urgent care repeats "call 999", because #20 retrieves chunks on their own. No real phone numbers, addresses or company names (payment is "mobile financial services", not a brand).
+- **Verified by:** Each file reviewed against the spec content rules; cross-file check of hours, support route, fees and the pharmacy flow.
+- **Source:** PR for #18
+
 ## 2026-11-19: Knowledge base uses MedlinePlus only (#17)
 
 - **Context:** Issue #17 suggested MedlinePlus, NHS (OGL) and own content. The fictional clinic is in Bangladesh. The NHS terms turned out to require a 7-day refresh for unchanged copies, or a separate attribution line plus an "as at" date for adapted ones. WHO content is CC BY-NC-SA (non-commercial, share-alike). The user asked whether making the repo private or gitignoring `content/` would avoid licensing; that would break CI, evals and fresh clones, and hide the portfolio.

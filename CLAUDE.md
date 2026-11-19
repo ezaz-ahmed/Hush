@@ -57,7 +57,7 @@ pnpm --filter @hush/api exec vitest run --project unit -t "test name"
 apps/web         Next.js app
 apps/api         NestJS API (Fastify)
 packages/shared  shared types, zod schemas, utilities
-content/         (planned) knowledge base markdown (with licence metadata)
+content/         knowledge base markdown with licence frontmatter; today only clinic/ (own content)
 evals/           (planned) golden sets, metrics, results history
 docs/            AI workflow log, retired specs, content sources; planned: PDPA mapping, error analysis
 docs/specs/      retired specs, one per ticket
