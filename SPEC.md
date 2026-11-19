@@ -1,127 +1,114 @@
-# Spec: Schema for users, consents, audit_logs and deletion_requests
+# Spec: Seed script for development data
 
 ## Objective
 
-Add the privacy tables that consent (#41, #34), withdrawal and deletion (#42, #47, #36), the audit log (#43, #44) and retention (#46) build on, and link `conversations` to `users`. After this ticket `apps/api/src/database/schema.ts` defines four more tables, and one new drizzle-kit migration (`0002`) creates them and adds `conversations.user_id`. No code reads or writes these tables yet.
+Give developers a fixed set of fake rows in their Neon `dev` branch (later the local Docker DB, #16) so the consent, chat and deletion work (#41, #42, #47) has users to work with. The script is one command, safe to rerun, and refuses to run unless it is sure the target is not production.
 
-**Acceptance criteria (from issue #14, amended where marked):**
+**Acceptance criteria (from issue #15):**
 
-- [ ] `users` (anonymous id, created_at)
-- [ ] `consents` (user_id, notice_version, purpose, granted_at, withdrawn_at)
-- [ ] `audit_logs` (actor, action, resource, timestamp, no PII). **Amended:** "actor" is two columns, `actor_type` + `actor_id`; "resource" is `resource_type` + `resource_id`; "timestamp" is `created_at` (same name as every other table). No free-form column (no `details`/`metadata` jsonb), so there is nowhere to put PII.
-- [ ] `deletion_requests` (user_id, requested_at, completed_at). **Amended:** `user_id` is nullable, FK → `users.id` ON DELETE SET NULL (see Risk).
-- [ ] **Added:** `users.audit_subject_id`, the only user identifier ever written to `audit_logs` (see Risk).
-- [ ] **Added:** `conversations.user_id` uuid NOT NULL → `users.id` ON DELETE CASCADE, with a btree index (promised by #13's spec, Decision 5).
-- [ ] **Manual, verified by the user:** the migration applies cleanly to the Neon `dev` branch (agents have no Neon credentials).
+- [ ] Seed script creates sample users, consents, conversations.
+- [ ] Idempotent and safe to re-run.
+- [ ] Never runs against production.
+- [ ] **Manual, verified by the user:** `pnpm --filter @hush/api db:seed` run twice on Neon `dev` inserts the rows once and changes nothing the second time (agents have no Neon credentials).
 
-**Out of scope:** the DB trigger that blocks UPDATE/DELETE on `audit_logs` and its tampering test (#43, see Risk); consent endpoints and the consent guard (#41); the audit service (#43); deletion and retention jobs (#42, #46, #47); any code that reads or writes these tables; seed data (#15); Testcontainers and integration tests (#16); zod schemas in `@hush/shared`; README changes.
+**Out of scope:** messages (see Decisions), `audit_logs`, `deletion_requests`, `documents`/`chunks` (ingestion is #22), a reset/truncate mode, Testcontainers and real-DB tests (#16), the production branch workflow (#82), a root-level `pnpm db:seed` (other `db:*` scripts are filter-only).
 
 ## Risk
 
-High-risk area per CLAUDE.md (consent, audit, retention storage). Tests come first, and the PR calls it out:
+Not high-risk under CLAUDE.md: no redaction, guardrail, prompt, retention or audit change, and no change to how consent is enforced. It writes `consents` rows, so the data must not look like a real grant from a real person: users are fixed uuids only (the `users` table has no PII columns), and every seeded id starts with `5eed` so it is obvious in any query result.
 
-- **Append-only `audit_logs` (rule 4).** This ticket adds no update or delete path: no code touches the table. The DB-level guard is **not** in this ticket: #43's acceptance criteria are exactly "DB trigger blocks UPDATE and DELETE on audit_logs" plus "tampering attempt fails", and that test needs a real DB (#16). A trigger is hand-written SQL (`drizzle-kit generate --custom`), which belongs with the test that proves it. `audit_logs` also has **no FKs**, so no cascade can ever delete or update audit rows.
-- **No PII in audit entries (rule 2).** Fixed columns only: `actor_type` enum, `actor_id` (a user's `audit_subject_id` or a system/admin identifier, never a name, email or `users.id`), `action` and `resource_type` (code constants), `resource_id` uuid. A test asserts the exact column list, so adding a free-form column fails CI.
-- **Deletion leaves no linkable id (decided by the user).** `users` → `conversations` → `messages` and `users` → `consents` cascade, so deleting a user row leaves no conversations, messages or consents. Two tables must outlive the user row without keeping a linkable id:
-  - **`audit_logs`: crypto-shredding-style pseudonym.** `users.audit_subject_id` (uuid NOT NULL UNIQUE, default `gen_random_uuid()`, separate from `users.id`) is the **only** user identifier ever written to `audit_logs` (`actor_id`, or `resource_id` when the subject is a user). It is never used anywhere else (not in URLs, cookies, logs, other tables or API responses). The `users` row is the only mapping from pseudonym to user; once it is deleted, audit rows still exist unchanged but nothing links them back to the person. Audit rows are never updated or deleted (rule 4). Enforcing "used nowhere else" is a code rule for #43; this ticket only creates the column and documents it in a one-line schema comment.
-  - **`deletion_requests`: `user_id` nullable, FK → `users.id` ON DELETE SET NULL.** The deletion job (#42/#47) sets `completed_at` and deletes the user in **one transaction**; Postgres then nulls `user_id`, so the completed request keeps only its own id and timestamps. Btree index on `user_id` kept (FK lookups and SET NULL).
-- **Adding a NOT NULL column to `conversations`.** Fine on an empty table. Nothing writes conversations yet, so Neon `dev` has none. If the user's `dev` branch somehow has rows, `db:migrate` fails cleanly (no partial state); clear them and rerun.
+The real risk is writing fake data into production. Neon connection strings do not name the branch (`ep-<id>[-pooler].<region>.aws.neon.tech`), so `main` and `dev` URLs look alike and a `NODE_ENV` check alone cannot tell them apart. Hence the fail-closed host allow-list below.
 
 ## Design
 
-### Assumptions
+### Production guard (fail closed)
 
-1. Ids are `uuid` with `gen_random_uuid()`, as in #13. A user is only random ids (`id`, `audit_subject_id`): no email, name, IP or user agent.
-2. Consent history is kept as rows: a new notice version or a re-grant is a **new row**, withdrawal sets `withdrawn_at`. How "valid consent" is computed is #41's job.
-3. One consent purpose today, `chat` (processing health questions to answer them). A Postgres enum, extended by `ALTER TYPE ... ADD VALUE` in a later migration if needed.
+`assertSeedAllowed(env)` in `apps/api/src/database/seed.ts`, pure, called before any connection is opened. Input: `NODE_ENV`, `DATABASE_URL` (already validated by `validateEnv`), `SEED_ALLOWED_HOST`.
 
-### Tables
+1. `NODE_ENV === 'production'` → refuse.
+2. Hostname of `DATABASE_URL` is `localhost`, `127.0.0.1` or `[::1]` → allow (local Docker / Testcontainers, #16).
+3. Otherwise allow only if `SEED_ALLOWED_HOST` is set and equals that hostname exactly (case-insensitive). Unset, empty or different → refuse.
 
-Added to `apps/api/src/database/schema.ts` (kept as one file: `drizzle.config.ts` points at it and it stays readable).
+The developer sets `SEED_ALLOWED_HOST` in `apps/api/.env` to the host of their `dev` `DATABASE_URL`. Production can only be seeded if someone deliberately writes the production host into that variable, and production (#82) will never have it.
 
-| Table               | Column             | Type                                                         | Notes                                                                     |
-| ------------------- | ------------------ | ------------------------------------------------------------ | ------------------------------------------------------------------------- |
-| `users`             | `id`               | uuid PK                                                      | anonymous; never written to `audit_logs`                                  |
-|                     | `audit_subject_id` | uuid NOT NULL UNIQUE default `gen_random_uuid()`             | the only user id written to `audit_logs`; used nowhere else (Risk)        |
-|                     | `created_at`       | timestamptz NOT NULL default `now()`                         |                                                                           |
-| `conversations`     | `user_id`          | **new:** uuid NOT NULL → `users.id` ON DELETE CASCADE        | btree index `conversations_user_id_idx`                                   |
-| `consents`          | `id`               | uuid PK                                                      |                                                                           |
-|                     | `user_id`          | uuid NOT NULL → `users.id` ON DELETE CASCADE                 | btree index `consents_user_id_idx`                                        |
-|                     | `notice_version`   | text NOT NULL                                                | privacy notice version the user saw (#34), e.g. `2026-11-01`              |
-|                     | `purpose`          | enum `consent_purpose` (`chat`) NOT NULL                     |                                                                           |
-|                     | `granted_at`       | timestamptz NOT NULL default `now()`                         |                                                                           |
-|                     | `withdrawn_at`     | timestamptz NULL                                             | null = not withdrawn                                                      |
-| `audit_logs`        | `id`               | uuid PK                                                      |                                                                           |
-|                     | `actor_type`       | enum `audit_actor_type` (`user`, `admin`, `system`) NOT NULL |                                                                           |
-|                     | `actor_id`         | text NULL                                                    | user's `audit_subject_id` or admin/system id; null for system jobs. No FK |
-|                     | `action`           | text NOT NULL                                                | code constant, e.g. `consent.granted`, `conversation.viewed` (#43)        |
-|                     | `resource_type`    | text NOT NULL                                                | e.g. `conversation`, `consent`, `user`                                    |
-|                     | `resource_id`      | uuid NULL                                                    | no FK: the resource may be deleted, the entry stays                       |
-|                     | `created_at`       | timestamptz NOT NULL default `clock_timestamp()`             | entries written in one transaction keep their order (as `messages`)       |
-| `deletion_requests` | `id`               | uuid PK                                                      |                                                                           |
-|                     | `user_id`          | uuid NULL → `users.id` ON DELETE SET NULL                    | nulled when the user is deleted (see Risk). btree index                   |
-|                     | `requested_at`     | timestamptz NOT NULL default `now()`                         |                                                                           |
-|                     | `completed_at`     | timestamptz NULL                                             | null = pending                                                            |
+Refusal throws `Error('Refusing to seed: <reason>')` where reason is one of `NODE_ENV is production` / `SEED_ALLOWED_HOST does not match DATABASE_URL`. It never contains the URL, host, or any env value (rule 2/8). The runner exits non-zero.
 
-`action` and `resource_type` are `text`, not enums: #43/#44/#42 will add actions, and they are code constants, not user input. `actor_type` is an enum because it is small and closed.
+`SEED_ALLOWED_HOST` is validated with zod in `seed.ts` (`z.string().optional()`, blank = unset) and not added to the API's `envSchema`, because the API never reads it. It goes into `apps/api/.env.example`, commented out, with a one-line explanation.
 
-Deliberately left out: indexes on `audit_logs` (no query exists yet; #43/#44 add them with the query), a partial unique index on active consents (#41 decides the "valid consent" rule), `updated_at`, soft deletes, a `users.deleted_at`, an audit `details` column.
+### Idempotency
 
-### Drizzle specifics
+- Every row has a fixed uuid of the form `5eed0000-0000-4000-8000-0000000000NN` (valid v4 shape).
+- Every insert uses `.onConflictDoNothing()` (no target, so any unique conflict, including `users.audit_subject_id`, is a no-op).
+- All inserts run in one `db.transaction`, users first. A failure leaves nothing half-seeded.
+- Rerun inserts zero rows. It does **not** reset seeded rows a developer has edited (documented in README); that would need UPDATE/DELETE and is not asked for.
+- `audit_subject_id` is not set by the seed; the column default generates it. The pseudonym stays random and appears nowhere in code.
 
-Same building blocks as #13: `pgTable`, `pgEnum`, `uuid().primaryKey().default(sql\`gen_random_uuid()\`)`, `.references(() => users.id, { onDelete: 'cascade' })`, `index().on()`, `timestamp(..., { withTimezone: true })`. `users`must be declared before`conversations`in the file (or referenced lazily, which`.references(() => ...)` already does).
+### What is seeded
 
-Migration `0002_<name>.sql` is generated by `pnpm --filter @hush/api db:generate --name users_consents_audit_deletion` and committed unedited. `0000` and `0001` are not touched. If drizzle-kit prompts interactively or emits wrong SQL, the implementer stops and reports rather than hand-editing.
+Fixed timestamps (not `now()`) so data is the same on every machine. Notice version `2026-11-01`, purpose `chat`.
 
-### `@hush/shared`: nothing
+| Table           | Rows | Notes                                                                |
+| --------------- | ---- | -------------------------------------------------------------------- |
+| `users`         | 3    | U1 consented, U2 consent withdrawn, U3 never consented               |
+| `consents`      | 2    | U1: granted 2026-11-01. U2: granted 2026-11-01, withdrawn 2026-11-02 |
+| `conversations` | 3    | U1: two, U2: one. No messages (see below). U3: none                  |
 
-Consent and deletion types cross the wire in #41/#47; zod schemas go there then.
+### Decisions
+
+1. **No messages.** `messages.content` becomes ciphertext in #45 and is only written through the repository layer, which does not exist yet. Seeding plaintext now would leave rows that break once encryption lands. #45 (or a follow-up) adds seeded messages through the repository.
+2. **No `audit_logs`.** Append-only (rule 4); seeded entries would be fake history that can never be removed, and writes belong to the audit service (#43).
+3. **No `deletion_requests`, `documents`, `chunks`.** No consumer yet; documents/chunks come from ingestion (#22) with real embeddings.
+4. **Runner:** `tsx` (already a root devDependency, no new dep) runs the TypeScript entry directly. Connection via `DATABASE_URL` (pooled; transactions work in PgBouncer transaction mode) and a `pg` Pool, ended in `finally`.
+
+### Files
+
+```
+apps/api/src/database/seed.ts         assertSeedAllowed, SEED rows, seedQueries(db), seed(db)
+apps/api/src/database/seed.test.ts    unit tests (no DB)
+apps/api/src/database/run-seed.ts     entry: load .env, validateEnv, guard, connect, seed, log counts, end pool
+apps/api/package.json                 "db:seed": "tsx src/database/run-seed.ts"
+apps/api/.env.example                 # SEED_ALLOWED_HOST=ep-example-pooler.REGION.aws.neon.tech
+README.md                             db:seed bullet under Migrations
+```
+
+`seedQueries(q)` returns the insert builders in order (users, consents, conversations); `seed(db)` runs them in a transaction (`db.transaction(tx => ...seedQueries(tx))`). Splitting them lets tests inspect the SQL without a database. `run-seed.ts` loads `.env` the same way `drizzle.config.ts` does (`process.loadEnvFile` only if present; process env wins) and logs only table names and inserted row counts.
 
 ## Commands
 
 ```bash
-pnpm --filter @hush/api db:generate --name users_consents_audit_deletion   # no .env needed
-pnpm --filter @hush/api db:generate        # rerun: must report no schema changes
-DATABASE_URL_UNPOOLED=postgresql://test:test@localhost:5432/hush_test pnpm --filter @hush/api exec drizzle-kit check
-pnpm --filter @hush/api exec vitest run src/database/schema.test.ts
+pnpm --filter @hush/api exec vitest run src/database/seed.test.ts
 pnpm format && pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build
 
-# Manual, user only (apps/api/.env pointing at Neon dev):
-pnpm --filter @hush/api db:migrate
+# Guard smoke test, safe for agents (fake prod-like host, guard refuses before connecting):
+DATABASE_URL=postgresql://u:p@ep-fake.example.neon.tech/db SEED_ALLOWED_HOST= pnpm --filter @hush/api db:seed   # must exit non-zero, "Refusing to seed"
+
+# Manual, user only (apps/api/.env pointing at Neon dev, SEED_ALLOWED_HOST set):
+pnpm --filter @hush/api db:seed   # twice; second run inserts 0 rows
 ```
 
 ## Testing strategy
 
-No database until #16, so tests cover the schema definition (extend `apps/api/src/database/schema.test.ts`, `getTableConfig`). Tests first.
+Unit tests in `seed.test.ts`, written first. No database (Testcontainers is #16).
 
-1. `conversations.user_id` and `consents.user_id` FKs reference `users` with `onDelete: 'cascade'`; both columns are NOT NULL.
-2. `audit_logs` has **no** foreign keys. `deletion_requests.user_id` FK references `users` with `onDelete: 'set null'` and the column is nullable.
-3. `audit_logs` columns are exactly `id, actor_type, actor_id, action, resource_type, resource_id, created_at` (no-PII guard), and `created_at` defaults to `clock_timestamp()`.
-4. `users` columns are exactly `id, audit_subject_id, created_at` (anonymous); `audit_subject_id` is uuid, NOT NULL, unique, with a `gen_random_uuid()` default.
-5. btree indexes on `conversations.user_id`, `consents.user_id`, `deletion_requests.user_id`.
-6. Enum values: `consent_purpose` = `['chat']`, `audit_actor_type` = `['user', 'admin', 'system']`.
-7. `consents.withdrawn_at` and `deletion_requests.completed_at` are nullable; `granted_at` and `requested_at` are NOT NULL with a default.
+1. Guard: refuses on `NODE_ENV=production` even for localhost; allows `localhost`, `127.0.0.1`, `[::1]`; refuses a remote host with `SEED_ALLOWED_HOST` unset, empty, or different; allows an exact match (case-insensitive); refusal messages never contain the URL, host or password.
+2. Data: all ids unique, valid uuids, start with `5eed`; every consent and conversation `userId` is a seeded user; no row sets `auditSubjectId`; U2's consent has `withdrawnAt` after `grantedAt`.
+3. Queries: `seedQueries` on a drizzle instance with a lazy fake-URL Pool (never connects, as `vitest.config.ts` already does) returns inserts in order users → consents → conversations, and every `.toSQL().sql` contains `on conflict do nothing`.
 
-Plus the reviewed migration SQL, the no-drift rerun of `db:generate`, and `drizzle-kit check`. Real cascades, the deletion flow and the append-only trigger are proven against a real DB in #16/#43/#47 (the PR notes this as follow-up).
+Real "run twice, row counts unchanged" against Postgres is the manual step on Neon `dev` now, and an integration test in #16 (noted in the PR as follow-up).
 
 ## Boundaries
 
-- Always: migrations generated by drizzle-kit and committed unedited; fake URLs only; full CLAUDE.md commit sequence.
-- Ask first: any new dependency; a column on `users` or `audit_logs` beyond this spec; editing `drizzle.config.ts`; a hand-written (custom) migration.
-- Never: edit `0000`/`0001`; any UPDATE/DELETE code path for `audit_logs`; an FK from `audit_logs` to anything; running anything against Neon; tests that need a database.
+- Always: guard runs before any connection; fake data only; full CLAUDE.md commit sequence.
+- Ask first: any new dependency; seeding any table beyond the three above; any UPDATE/DELETE/TRUNCATE in the seed.
+- Never: run `db:seed`, `db:migrate` or anything against Neon; read, print or edit `apps/api/.env`; print URLs or hosts; write `audit_logs`; write `messages.content`.
 
 ## Success criteria
 
-- `schema.ts` defines `users`, `consents`, `audit_logs`, `deletion_requests`, the two enums, the indexes above, `users.audit_subject_id` and `conversations.user_id`; `drizzle/0002_*.sql` and its snapshot are committed.
-- `db:generate` rerun reports no changes; `drizzle-kit check` passes.
-- `schema.test.ts` (old and new tests) passes; the full gate sequence passes with no `apps/api/.env`.
-- **Manual, user:** `db:migrate` on Neon `dev` succeeds; `\d conversations` shows the `user_id` FK. The PR keeps an unticked checkbox for this until the user confirms.
-
-## Decisions (resolved open questions)
-
-1. **Consent purpose:** only `chat`. Confirmed.
-2. **No linkable id after deletion:** `users.audit_subject_id` pseudonym for `audit_logs`; `deletion_requests.user_id` ON DELETE SET NULL. Decided by the user (replaces "keep the random user uuid").
+- `pnpm --filter @hush/api db:seed` exists; with a non-allowed remote host it exits non-zero before connecting, naming the reason only.
+- `seed.test.ts` passes; full gate sequence passes with no `apps/api/.env`.
+- `.env.example` and README document `SEED_ALLOWED_HOST` and `db:seed`.
+- **Manual, user:** two runs on Neon `dev`, second inserts nothing. The PR keeps an unticked checkbox until the user confirms.
 
 ## Open questions
 
-None.
+1. Is the `SEED_ALLOWED_HOST` allow-list acceptable (one extra line in `apps/api/.env`), or is a `NODE_ENV`-only guard enough for now? The spec assumes the allow-list, because `NODE_ENV` cannot tell Neon `main` from `dev`.
