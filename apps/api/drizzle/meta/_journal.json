@@ -15,6 +15,13 @@
       "when": 1795058460077,
       "tag": "0001_rag_and_chat_tables",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1795061389193,
+      "tag": "0002_users_consents_audit_deletion",
+      "breakpoints": true
     }
   ]
 }

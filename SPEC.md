@@ -1,88 +1,88 @@
-# Spec: Schema for documents, chunks, conversations and messages
+# Spec: Schema for users, consents, audit_logs and deletion_requests
 
 ## Objective
 
-Add the RAG and chat tables that ingestion (#19–#22), retrieval (#25/#26) and the chat endpoint (#28) build on. After this ticket `apps/api/src/database/schema.ts` defines four tables, and one drizzle-kit migration creates them with an HNSW index on embeddings and a GIN index on full-text search. No code reads or writes these tables yet.
+Add the privacy tables that consent (#41, #34), withdrawal and deletion (#42, #47, #36), the audit log (#43, #44) and retention (#46) build on, and link `conversations` to `users`. After this ticket `apps/api/src/database/schema.ts` defines four more tables, and one new drizzle-kit migration (`0002`) creates them and adds `conversations.user_id`. No code reads or writes these tables yet.
 
-**Acceptance criteria (from issue #13):**
+**Acceptance criteria (from issue #14, amended where marked):**
 
-- [ ] `documents` (source, license, url, content hash)
-- [ ] `chunks` (document_id, text, heading path, embedding vector, tsvector)
-- [ ] `conversations`, `messages` (role, content, citations, guardrail decision)
-- [ ] HNSW index on embeddings, GIN index on tsvector
+- [ ] `users` (anonymous id, created_at)
+- [ ] `consents` (user_id, notice_version, purpose, granted_at, withdrawn_at)
+- [ ] `audit_logs` (actor, action, resource, timestamp, no PII). **Amended:** "actor" is two columns, `actor_type` + `actor_id`; "resource" is `resource_type` + `resource_id`; "timestamp" is `created_at` (same name as every other table). No free-form column (no `details`/`metadata` jsonb), so there is nowhere to put PII.
+- [ ] `deletion_requests` (user_id, requested_at, completed_at). **Amended:** `user_id` is nullable, FK → `users.id` ON DELETE SET NULL (see Risk).
+- [ ] **Added:** `users.audit_subject_id`, the only user identifier ever written to `audit_logs` (see Risk).
+- [ ] **Added:** `conversations.user_id` uuid NOT NULL → `users.id` ON DELETE CASCADE, with a btree index (promised by #13's spec, Decision 5).
 - [ ] **Manual, verified by the user:** the migration applies cleanly to the Neon `dev` branch (agents have no Neon credentials).
 
-**Out of scope:** `users`, `consents`, `audit_logs`, `deletion_requests` (#14), so `conversations` has no `user_id` yet (FK added in #14, see Decisions); field-level encryption and the message repository layer (#45); any code that reads or writes these tables (ingestion, retrieval, chat); seed data (#15); Testcontainers and integration tests (#16); zod schemas in `@hush/shared`; README changes.
+**Out of scope:** the DB trigger that blocks UPDATE/DELETE on `audit_logs` and its tampering test (#43, see Risk); consent endpoints and the consent guard (#41); the audit service (#43); deletion and retention jobs (#42, #46, #47); any code that reads or writes these tables; seed data (#15); Testcontainers and integration tests (#16); zod schemas in `@hush/shared`; README changes.
 
 ## Risk
 
-Not a code change to redaction, consent, audit, retention, guardrails or prompts, but it **creates the storage** that several of them rely on, so the PR calls it out:
+High-risk area per CLAUDE.md (consent, audit, retention storage). Tests come first, and the PR calls it out:
 
-- **Message content (encryption rule).** CLAUDE.md says message content is encrypted at field level and only touched through the repository layer. This ticket only creates the column. Decision: `messages.content` is `text NOT NULL`, documented in the schema as "ciphertext once #45 lands; write only through the repository". #45 (AES-GCM, base64 output) stores ciphertext in the same `text` column, so it needs no migration. Nothing writes messages in this ticket, so no plaintext is ever stored. **#45 must land before #28 writes real messages**; the PR says so.
-- **Prompt version.** `messages.prompt_version` is required for assistant messages via a check constraint (`role <> 'assistant' OR prompt_version IS NOT NULL`). Refusal and emergency templates are versioned files too, so the rule holds for LLM-free replies.
-- **Deletion (future privacy work).** `chunks.document_id` and `messages.conversation_id` are `ON DELETE CASCADE`, so deleting a conversation leaves no messages behind. The user → conversation link and its cascade come with #14.
-- **Guardrail decision** is stored as an enum for later logging (#54). No guardrail logic here.
+- **Append-only `audit_logs` (rule 4).** This ticket adds no update or delete path: no code touches the table. The DB-level guard is **not** in this ticket: #43's acceptance criteria are exactly "DB trigger blocks UPDATE and DELETE on audit_logs" plus "tampering attempt fails", and that test needs a real DB (#16). A trigger is hand-written SQL (`drizzle-kit generate --custom`), which belongs with the test that proves it. `audit_logs` also has **no FKs**, so no cascade can ever delete or update audit rows.
+- **No PII in audit entries (rule 2).** Fixed columns only: `actor_type` enum, `actor_id` (a user's `audit_subject_id` or a system/admin identifier, never a name, email or `users.id`), `action` and `resource_type` (code constants), `resource_id` uuid. A test asserts the exact column list, so adding a free-form column fails CI.
+- **Deletion leaves no linkable id (decided by the user).** `users` → `conversations` → `messages` and `users` → `consents` cascade, so deleting a user row leaves no conversations, messages or consents. Two tables must outlive the user row without keeping a linkable id:
+  - **`audit_logs`: crypto-shredding-style pseudonym.** `users.audit_subject_id` (uuid NOT NULL UNIQUE, default `gen_random_uuid()`, separate from `users.id`) is the **only** user identifier ever written to `audit_logs` (`actor_id`, or `resource_id` when the subject is a user). It is never used anywhere else (not in URLs, cookies, logs, other tables or API responses). The `users` row is the only mapping from pseudonym to user; once it is deleted, audit rows still exist unchanged but nothing links them back to the person. Audit rows are never updated or deleted (rule 4). Enforcing "used nowhere else" is a code rule for #43; this ticket only creates the column and documents it in a one-line schema comment.
+  - **`deletion_requests`: `user_id` nullable, FK → `users.id` ON DELETE SET NULL.** The deletion job (#42/#47) sets `completed_at` and deletes the user in **one transaction**; Postgres then nulls `user_id`, so the completed request keeps only its own id and timestamps. Btree index on `user_id` kept (FK lookups and SET NULL).
+- **Adding a NOT NULL column to `conversations`.** Fine on an empty table. Nothing writes conversations yet, so Neon `dev` has none. If the user's `dev` branch somehow has rows, `db:migrate` fails cleanly (no partial state); clear them and rerun.
 
 ## Design
 
 ### Assumptions
 
-1. **Embedding dimension 1024.** No embedding provider exists yet (#21). 1024 is the default for Voyage (`voyage-3.5`, the provider Anthropic recommends), and OpenAI `text-embedding-3-*` can return 1024 through its `dimensions` parameter, so either choice in #21 fits without a migration. It is well under pgvector's 2000-dimension HNSW limit. Changing it later means a migration plus re-embedding everything, which is cheap at this content size.
-2. **Cosine distance** (`vector_cosine_ops`), matching #25 ("cosine similarity search").
-3. **English full-text config** (`to_tsvector('english', text)`). The content is English.
-4. Ids are `uuid` with `gen_random_uuid()` (built into Postgres 13+, no extension).
+1. Ids are `uuid` with `gen_random_uuid()`, as in #13. A user is only random ids (`id`, `audit_subject_id`): no email, name, IP or user agent.
+2. Consent history is kept as rows: a new notice version or a re-grant is a **new row**, withdrawal sets `withdrawn_at`. How "valid consent" is computed is #41's job.
+3. One consent purpose today, `chat` (processing health questions to answer them). A Postgres enum, extended by `ALTER TYPE ... ADD VALUE` in a later migration if needed.
 
 ### Tables
 
-`apps/api/src/database/schema.ts` (one file; #14 may split it when it adds more):
+Added to `apps/api/src/database/schema.ts` (kept as one file: `drizzle.config.ts` points at it and it stays readable).
 
-| Table           | Column               | Type                                                                                        | Notes                                                                                        |
-| --------------- | -------------------- | ------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| `documents`     | `id`                 | uuid PK                                                                                     |                                                                                              |
-|                 | `source`             | text NOT NULL **UNIQUE**                                                                    | repo-relative content path, e.g. `content/hair-loss/finasteride.md`. Re-ingest key (#22)     |
-|                 | `title`              | text NOT NULL                                                                               | not in the issue; citations (#33) need something to show                                     |
-|                 | `license`            | text NOT NULL                                                                               | e.g. `CC-BY-4.0`, `original`                                                                 |
-|                 | `url`                | text NULL                                                                                   | null for the fictional clinic's own content                                                  |
-|                 | `content_hash`       | text NOT NULL                                                                               | sha256 hex of the normalised content (#22 compares it)                                       |
-|                 | `created_at`         | timestamptz NOT NULL default `now()`                                                        |                                                                                              |
-| `chunks`        | `id`                 | uuid PK                                                                                     |                                                                                              |
-|                 | `document_id`        | uuid NOT NULL → `documents.id` ON DELETE CASCADE                                            | btree index (Postgres does not index FKs; cascades and joins need it)                        |
-|                 | `text`               | text NOT NULL                                                                               |                                                                                              |
-|                 | `heading_path`       | text[] NOT NULL default `'{}'`                                                              | e.g. `{Finasteride, Side effects}`                                                           |
-|                 | `embedding`          | vector(1024) NOT NULL                                                                       | HNSW index, `vector_cosine_ops`                                                              |
-|                 | `tsv`                | tsvector, generated always as `to_tsvector('english', text)` stored                         | GIN index. Postgres keeps it in sync; the app never writes it                                |
-| `conversations` | `id`                 | uuid PK                                                                                     |                                                                                              |
-|                 | `created_at`         | timestamptz NOT NULL default `now()`                                                        |                                                                                              |
-| `messages`      | `id`                 | uuid PK                                                                                     |                                                                                              |
-|                 | `conversation_id`    | uuid NOT NULL → `conversations.id` ON DELETE CASCADE                                        | btree index                                                                                  |
-|                 | `role`               | enum `message_role` (`user`, `assistant`)                                                   | no `system`: system prompts are files, not stored messages                                   |
-|                 | `content`            | text NOT NULL                                                                               | ciphertext after #45 (see Risk)                                                              |
-|                 | `citations`          | jsonb NOT NULL default `'[]'`, typed `{ chunkId, documentId, source }[]` (all `string`)     | no FK; `documentId`/`source` keep old citations resolvable after re-ingest. Validated by #29 |
-|                 | `guardrail_decision` | enum `guardrail_decision` (`allowed`, `emergency`, `diagnosis`, `dosage`, `off_topic`) NULL | values from #49's classifier. Set on user messages; null on assistant messages               |
-|                 | `prompt_version`     | text NULL, check: required when `role = 'assistant'`                                        | see Risk                                                                                     |
-|                 | `created_at`         | timestamptz NOT NULL default `clock_timestamp()`                                            | not `now()`: a user and assistant message saved in one transaction would tie                 |
+| Table               | Column             | Type                                                         | Notes                                                                     |
+| ------------------- | ------------------ | ------------------------------------------------------------ | ------------------------------------------------------------------------- |
+| `users`             | `id`               | uuid PK                                                      | anonymous; never written to `audit_logs`                                  |
+|                     | `audit_subject_id` | uuid NOT NULL UNIQUE default `gen_random_uuid()`             | the only user id written to `audit_logs`; used nowhere else (Risk)        |
+|                     | `created_at`       | timestamptz NOT NULL default `now()`                         |                                                                           |
+| `conversations`     | `user_id`          | **new:** uuid NOT NULL → `users.id` ON DELETE CASCADE        | btree index `conversations_user_id_idx`                                   |
+| `consents`          | `id`               | uuid PK                                                      |                                                                           |
+|                     | `user_id`          | uuid NOT NULL → `users.id` ON DELETE CASCADE                 | btree index `consents_user_id_idx`                                        |
+|                     | `notice_version`   | text NOT NULL                                                | privacy notice version the user saw (#34), e.g. `2026-11-01`              |
+|                     | `purpose`          | enum `consent_purpose` (`chat`) NOT NULL                     |                                                                           |
+|                     | `granted_at`       | timestamptz NOT NULL default `now()`                         |                                                                           |
+|                     | `withdrawn_at`     | timestamptz NULL                                             | null = not withdrawn                                                      |
+| `audit_logs`        | `id`               | uuid PK                                                      |                                                                           |
+|                     | `actor_type`       | enum `audit_actor_type` (`user`, `admin`, `system`) NOT NULL |                                                                           |
+|                     | `actor_id`         | text NULL                                                    | user's `audit_subject_id` or admin/system id; null for system jobs. No FK |
+|                     | `action`           | text NOT NULL                                                | code constant, e.g. `consent.granted`, `conversation.viewed` (#43)        |
+|                     | `resource_type`    | text NOT NULL                                                | e.g. `conversation`, `consent`, `user`                                    |
+|                     | `resource_id`      | uuid NULL                                                    | no FK: the resource may be deleted, the entry stays                       |
+|                     | `created_at`       | timestamptz NOT NULL default `clock_timestamp()`             | entries written in one transaction keep their order (as `messages`)       |
+| `deletion_requests` | `id`               | uuid PK                                                      |                                                                           |
+|                     | `user_id`          | uuid NULL → `users.id` ON DELETE SET NULL                    | nulled when the user is deleted (see Risk). btree index                   |
+|                     | `requested_at`     | timestamptz NOT NULL default `now()`                         |                                                                           |
+|                     | `completed_at`     | timestamptz NULL                                             | null = pending                                                            |
 
-Deliberately left out: `updated_at` columns, chunk position/ordinal, token counts, embedding model name, soft deletes. Add when a ticket needs them.
+`action` and `resource_type` are `text`, not enums: #43/#44/#42 will add actions, and they are code constants, not user input. `actor_type` is an enum because it is small and closed.
 
-### Drizzle specifics (checked against installed `drizzle-orm` 0.45.4 types)
+Deliberately left out: indexes on `audit_logs` (no query exists yet; #43/#44 add them with the query), a partial unique index on active consents (#41 decides the "valid consent" rule), `updated_at`, soft deletes, a `users.deleted_at`, an audit `details` column.
 
-- `vector('embedding', { dimensions: 1024 })` is built in (`pg-core/columns/vector_extension`).
-- `index().using('hnsw', t.embedding.op('vector_cosine_ops'))` and `index().using('gin', t.tsv)` are typed (`PgIndexMethod` includes `hnsw`, `PgIndexOpClass` includes `vector_cosine_ops`).
-- There is no built-in `tsvector` column, so a three-line `customType<{ data: string }>({ dataType: () => 'tsvector' })` plus `.generatedAlwaysAs(sql\`to_tsvector('english', ${t.text})\`)`. If drizzle-kit generates bad SQL for this, the implementer stops and reports rather than hand-editing the migration.
-- `pgEnum` for `message_role` and `guardrail_decision`; `check()` for the prompt version rule; `jsonb().$type<Citation[]>()` with an exported `type Citation = { chunkId: string; documentId: string; source: string }`.
+### Drizzle specifics
 
-Migration `0001_<name>.sql` is generated by `pnpm --filter @hush/api db:generate --name rag_and_chat_tables` and committed unedited. It relies on `0000_enable_pgvector` for the `vector` type.
+Same building blocks as #13: `pgTable`, `pgEnum`, `uuid().primaryKey().default(sql\`gen_random_uuid()\`)`, `.references(() => users.id, { onDelete: 'cascade' })`, `index().on()`, `timestamp(..., { withTimezone: true })`. `users`must be declared before`conversations`in the file (or referenced lazily, which`.references(() => ...)` already does).
+
+Migration `0002_<name>.sql` is generated by `pnpm --filter @hush/api db:generate --name users_consents_audit_deletion` and committed unedited. `0000` and `0001` are not touched. If drizzle-kit prompts interactively or emits wrong SQL, the implementer stops and reports rather than hand-editing.
 
 ### `@hush/shared`: nothing
 
-Citation, role and guardrail decision types are only used by the API's schema today. Zod schemas for them go into `@hush/shared` when they cross the wire (citations in #28/#29/#33). The enum values are written once in `schema.ts`.
+Consent and deletion types cross the wire in #41/#47; zod schemas go there then.
 
 ## Commands
 
 ```bash
-pnpm --filter @hush/api db:generate --name rag_and_chat_tables   # no .env needed
+pnpm --filter @hush/api db:generate --name users_consents_audit_deletion   # no .env needed
 pnpm --filter @hush/api db:generate        # rerun: must report no schema changes
-pnpm --filter @hush/api exec drizzle-kit check
+DATABASE_URL_UNPOOLED=postgresql://test:test@localhost:5432/hush_test pnpm --filter @hush/api exec drizzle-kit check
 pnpm --filter @hush/api exec vitest run src/database/schema.test.ts
 pnpm format && pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build
 
@@ -90,46 +90,37 @@ pnpm format && pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && 
 pnpm --filter @hush/api db:migrate
 ```
 
-`drizzle-kit check` must not need a DB URL; if it trips the config's `Missing env` guard, the implementer reports it and does not change the guard without asking.
-
 ## Testing strategy
 
-No database is available until #16, so this ticket tests the schema definition, not behaviour. Tests first.
+No database until #16, so tests cover the schema definition (extend `apps/api/src/database/schema.test.ts`, `getTableConfig`). Tests first.
 
-`apps/api/src/database/schema.test.ts`, using `getTableConfig` from `drizzle-orm/pg-core`:
+1. `conversations.user_id` and `consents.user_id` FKs reference `users` with `onDelete: 'cascade'`; both columns are NOT NULL.
+2. `audit_logs` has **no** foreign keys. `deletion_requests.user_id` FK references `users` with `onDelete: 'set null'` and the column is nullable.
+3. `audit_logs` columns are exactly `id, actor_type, actor_id, action, resource_type, resource_id, created_at` (no-PII guard), and `created_at` defaults to `clock_timestamp()`.
+4. `users` columns are exactly `id, audit_subject_id, created_at` (anonymous); `audit_subject_id` is uuid, NOT NULL, unique, with a `gen_random_uuid()` default.
+5. btree indexes on `conversations.user_id`, `consents.user_id`, `deletion_requests.user_id`.
+6. Enum values: `consent_purpose` = `['chat']`, `audit_actor_type` = `['user', 'admin', 'system']`.
+7. `consents.withdrawn_at` and `deletion_requests.completed_at` are nullable; `granted_at` and `requested_at` are NOT NULL with a default.
 
-1. `chunks.document_id` and `messages.conversation_id` foreign keys have `onDelete: 'cascade'`.
-2. `chunks` has an `hnsw` index on `embedding` with `vector_cosine_ops`, and a `gin` index on `tsv`.
-3. `embedding` has 1024 dimensions; `tsv` is generated (`generated` set, not insertable).
-4. `documents.source` is unique.
-5. `messages` has the prompt-version check constraint; enum values match the lists above.
-6. `messages.citations` is `jsonb`, not null, default `'[]'`, and its select type is `Citation[]` with `chunkId`, `documentId` and `source` (`expectTypeOf`).
-
-Plus the reviewed migration SQL (read in the PR), the no-drift rerun of `db:generate`, and `drizzle-kit check`. Real inserts, cascades, the check constraint and an HNSW query are proven against a real DB in #16 (the PR notes this as follow-up).
+Plus the reviewed migration SQL, the no-drift rerun of `db:generate`, and `drizzle-kit check`. Real cascades, the deletion flow and the append-only trigger are proven against a real DB in #16/#43/#47 (the PR notes this as follow-up).
 
 ## Boundaries
 
 - Always: migrations generated by drizzle-kit and committed unedited; fake URLs only; full CLAUDE.md commit sequence.
-- Ask first: any new dependency; changing the embedding dimension; editing `0000`; adding columns or tables beyond this spec; touching `drizzle.config.ts`; anything that writes messages.
-- Never: code that stores message content (before #45); hand-edited generated migrations; running anything against Neon; tests that need a database.
+- Ask first: any new dependency; a column on `users` or `audit_logs` beyond this spec; editing `drizzle.config.ts`; a hand-written (custom) migration.
+- Never: edit `0000`/`0001`; any UPDATE/DELETE code path for `audit_logs`; an FK from `audit_logs` to anything; running anything against Neon; tests that need a database.
 
 ## Success criteria
 
-- `schema.ts` defines the four tables, two enums and the indexes above; `drizzle/0001_*.sql` and its snapshot are committed.
+- `schema.ts` defines `users`, `consents`, `audit_logs`, `deletion_requests`, the two enums, the indexes above, `users.audit_subject_id` and `conversations.user_id`; `drizzle/0002_*.sql` and its snapshot are committed.
 - `db:generate` rerun reports no changes; `drizzle-kit check` passes.
-- `schema.test.ts` passes; the full gate sequence passes with no `apps/api/.env`.
-- `DatabaseModule` tests still pass (the `Db` type now carries the real schema).
-- **Manual, user:** `db:migrate` on Neon `dev` succeeds and `\d chunks` shows the HNSW and GIN indexes. The PR has an unticked checkbox for this until the user confirms.
+- `schema.test.ts` (old and new tests) passes; the full gate sequence passes with no `apps/api/.env`.
+- **Manual, user:** `db:migrate` on Neon `dev` succeeds; `\d conversations` shows the `user_id` FK. The PR keeps an unticked checkbox for this until the user confirms.
 
 ## Decisions (resolved open questions)
 
-1. **Embedding dimension 1024.** Confirmed.
-2. **Message encryption:** plain `text` column now; #45 stores base64 AES-GCM ciphertext in it with no migration, and lands before #28 writes messages. Confirmed.
-3. **Citations** store `{ chunkId, documentId, source }`, so old citations still resolve to a document after re-ingestion deletes and recreates chunks. Confirmed.
-4. **`documents.title`:** keep.
-5. **`conversations.user_id`:** FK (NOT NULL, ON DELETE CASCADE) is added in #14; out of scope here.
-6. **`tsv`** covers chunk text only.
-7. **`guardrail_decision`** enum stays as specified; later checks (e.g. #52) may extend it.
+1. **Consent purpose:** only `chat`. Confirmed.
+2. **No linkable id after deletion:** `users.audit_subject_id` pseudonym for `audit_logs`; `deletion_requests.user_id` ON DELETE SET NULL. Decided by the user (replaces "keep the random user uuid").
 
 ## Open questions
 

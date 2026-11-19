@@ -1,12 +1,18 @@
 import { getTableConfig, PgDialect, type PgColumn } from 'drizzle-orm/pg-core';
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import {
+  auditActorType,
+  auditLogs,
   chunks,
+  consentPurpose,
+  consents,
   conversations,
+  deletionRequests,
   documents,
   guardrailDecision,
   messageRole,
   messages,
+  users,
 } from './schema.js';
 import type { Citation } from './schema.js';
 
@@ -94,5 +100,87 @@ describe('schema', () => {
       documentId: string;
       source: string;
     }>();
+  });
+});
+
+type AnyTable = Parameters<typeof getTableConfig>[0];
+const colNames = (t: AnyTable) => getTableConfig(t).columns.map((c) => c.name);
+const defaultSql = (t: AnyTable, name: string) => {
+  const d = col(t, name).default;
+  return new PgDialect().sqlToQuery(d as Parameters<PgDialect['sqlToQuery']>[0]).sql;
+};
+const fkOn = (t: AnyTable, column: string) =>
+  getTableConfig(t).foreignKeys.find((f) => f.reference().columns.some((c) => c.name === column));
+const btreeCols = (t: AnyTable) =>
+  getTableConfig(t).indexes.flatMap((i) =>
+    i.config.method === 'btree' || i.config.method === undefined
+      ? i.config.columns.map((c) => ('name' in c ? c.name : ''))
+      : [],
+  );
+
+describe('privacy schema', () => {
+  it('cascades conversations.user_id and consents.user_id from users, NOT NULL', () => {
+    for (const table of [conversations, consents]) {
+      const fk = fkOn(table, 'user_id');
+      expect(fk?.onDelete).toBe('cascade');
+      expect(fk?.reference().foreignTable).toBe(users);
+      expect(col(table, 'user_id').notNull).toBe(true);
+    }
+  });
+
+  it('gives audit_logs no foreign keys', () => {
+    expect(getTableConfig(auditLogs).foreignKeys).toEqual([]);
+  });
+
+  it('nulls deletion_requests.user_id when the user is deleted', () => {
+    const fk = fkOn(deletionRequests, 'user_id');
+    expect(fk?.onDelete).toBe('set null');
+    expect(fk?.reference().foreignTable).toBe(users);
+    expect(col(deletionRequests, 'user_id').notNull).toBe(false);
+  });
+
+  it('keeps audit_logs to the exact no-PII column list with clock_timestamp()', () => {
+    expect(colNames(auditLogs)).toEqual([
+      'id',
+      'actor_type',
+      'actor_id',
+      'action',
+      'resource_type',
+      'resource_id',
+      'created_at',
+    ]);
+    expect(defaultSql(auditLogs, 'created_at')).toBe('clock_timestamp()');
+  });
+
+  it('keeps users anonymous with a unique random audit_subject_id', () => {
+    expect(colNames(users)).toEqual(['id', 'audit_subject_id', 'created_at']);
+    const subject = col(users, 'audit_subject_id');
+    expect(subject.getSQLType()).toBe('uuid');
+    expect(subject.notNull).toBe(true);
+    expect(subject.isUnique).toBe(true);
+    expect(defaultSql(users, 'audit_subject_id')).toBe('gen_random_uuid()');
+  });
+
+  it('has btree indexes on the user_id foreign keys', () => {
+    expect(btreeCols(conversations)).toContain('user_id');
+    expect(btreeCols(consents)).toContain('user_id');
+    expect(btreeCols(deletionRequests)).toContain('user_id');
+  });
+
+  it('defines the consent_purpose and audit_actor_type enums', () => {
+    expect(consentPurpose.enumValues).toEqual(['chat']);
+    expect(auditActorType.enumValues).toEqual(['user', 'admin', 'system']);
+  });
+
+  it('makes withdrawn_at and completed_at nullable, granted_at and requested_at defaulted', () => {
+    expect(col(consents, 'withdrawn_at').notNull).toBe(false);
+    expect(col(deletionRequests, 'completed_at').notNull).toBe(false);
+    for (const [table, name] of [
+      [consents, 'granted_at'],
+      [deletionRequests, 'requested_at'],
+    ] as const) {
+      expect(col(table, name).notNull).toBe(true);
+      expect(col(table, name).hasDefault).toBe(true);
+    }
   });
 });
