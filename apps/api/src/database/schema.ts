@@ -18,6 +18,8 @@ export type Citation = { chunkId: string; documentId: string; source: string };
 const tsvector = customType<{ data: string }>({ dataType: () => 'tsvector' });
 
 export const messageRole = pgEnum('message_role', ['user', 'assistant']);
+export const consentPurpose = pgEnum('consent_purpose', ['chat']);
+export const auditActorType = pgEnum('audit_actor_type', ['user', 'admin', 'system']);
 export const guardrailDecision = pgEnum('guardrail_decision', [
   'allowed',
   'emergency',
@@ -68,12 +70,78 @@ export const chunks = pgTable(
   ],
 );
 
-export const conversations = pgTable('conversations', {
+export const users = pgTable('users', {
   id: uuid('id')
     .primaryKey()
     .default(sql`gen_random_uuid()`),
+  // The only user id ever written to audit_logs; used nowhere else (URLs, cookies, logs, other tables).
+  auditSubjectId: uuid('audit_subject_id')
+    .notNull()
+    .unique()
+    .default(sql`gen_random_uuid()`),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
+
+export const conversations = pgTable(
+  'conversations',
+  {
+    id: uuid('id')
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('conversations_user_id_idx').on(t.userId)],
+);
+
+export const consents = pgTable(
+  'consents',
+  {
+    id: uuid('id')
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    noticeVersion: text('notice_version').notNull(),
+    purpose: consentPurpose('purpose').notNull(),
+    grantedAt: timestamp('granted_at', { withTimezone: true }).notNull().defaultNow(),
+    withdrawnAt: timestamp('withdrawn_at', { withTimezone: true }),
+  },
+  (t) => [index('consents_user_id_idx').on(t.userId)],
+);
+
+// Append-only (rule 4). No FKs and no free-form column, so nothing cascades into it and no PII fits.
+export const auditLogs = pgTable('audit_logs', {
+  id: uuid('id')
+    .primaryKey()
+    .default(sql`gen_random_uuid()`),
+  actorType: auditActorType('actor_type').notNull(),
+  actorId: text('actor_id'),
+  action: text('action').notNull(),
+  resourceType: text('resource_type').notNull(),
+  resourceId: uuid('resource_id'),
+  // clock_timestamp(), not now(): entries written in one transaction keep their order.
+  createdAt: timestamp('created_at', { withTimezone: true })
+    .notNull()
+    .default(sql`clock_timestamp()`),
+});
+
+export const deletionRequests = pgTable(
+  'deletion_requests',
+  {
+    id: uuid('id')
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    // Nulled when the deletion job removes the user, so a completed request keeps no linkable id.
+    userId: uuid('user_id').references(() => users.id, { onDelete: 'set null' }),
+    requestedAt: timestamp('requested_at', { withTimezone: true }).notNull().defaultNow(),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+  },
+  (t) => [index('deletion_requests_user_id_idx').on(t.userId)],
+);
 
 export const messages = pgTable(
   'messages',

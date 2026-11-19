@@ -13,6 +13,13 @@ Format:
 - **Source:** commit sha(s) and/or PR number
 ```
 
+## 2026-11-19: Separate audit pseudonym so deleted users leave no linkable id (#14)
+
+- **Context:** Issue #14 adds `users`, `consents`, `audit_logs` and `deletion_requests`. The planning agent proposed letting `audit_logs` and `deletion_requests` keep the plain `users.id` after deletion, since it links to nothing. The user rejected that: a deleted user must leave no linkable id. Blanking ids in audit rows would break CLAUDE.md rule 4 (append-only), so the agent asked instead of improvising.
+- **Decision:** `users.audit_subject_id` (random uuid, unique) is the only user identifier ever written to `audit_logs` and is used nowhere else; deleting the `users` row removes the only mapping, and audit rows are never touched. `audit_logs` has no FKs and no free-form column. `deletion_requests.user_id` is ON DELETE SET NULL. `consents` and `conversations` cascade. Consent purpose is `chat` only. The DB append-only trigger stays with #43.
+- **Verified by:** `schema.test.ts` (written first; pins `audit_logs`/`users` column lists, FKs and cascades); `db:generate` reports no drift; full gate passing; code, security and test ship reviews all GO.
+- **Source:** `docs/specs/14-schema-users-consents-audit_logs-deletion_requests.md` (after retirement), PR for #14
+
 ## 2026-11-19: Drizzle on `pg`, DATABASE_URL required, agents never touch the real `.env` (#12)
 
 - **Context:** Issue #12 adds Drizzle ORM, drizzle-kit migrations and a Nest `DatabaseModule`. The developer's `apps/api/.env` holds real Neon `dev` URLs, and `drizzle.config.ts` loads it, so an agent checking `db:migrate` could have migrated Neon by accident.
