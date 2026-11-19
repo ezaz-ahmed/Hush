@@ -28,6 +28,7 @@ Run these from the repo root. Each Turbo task runs in every workspace that defin
 | `pnpm lint`         | Runs ESLint in every workspace.                                                                   |
 | `pnpm typecheck`    | Runs `tsc --noEmit` in every workspace.                                                           |
 | `pnpm test`         | Runs Vitest once in every workspace.                                                              |
+| `pnpm test:int`     | Runs integration tests against a throwaway Postgres (needs Docker).                               |
 | `pnpm format`       | Formats the repo with Prettier.                                                                   |
 | `pnpm format:check` | Checks formatting without writing anything. Use it in CI.                                         |
 
@@ -60,7 +61,7 @@ Hosted Postgres with pgvector on Neon. The API needs `DATABASE_URL` to start. Dr
 
 - **`main`** is the production-like branch. Production hardening is tracked in #82.
 - **`dev`** is branched from `main` for local development. Your `apps/api/.env` points at it.
-- Integration tests use Testcontainers (`pgvector/pgvector`), never Neon. Seed scripts must refuse to run against `main`.
+- Integration tests use Testcontainers (`pgvector/pgvector`), never Neon. Run them with `pnpm test:int` (needs Docker; `pnpm test` stays Docker-free). Seed scripts must refuse to run against `main`.
 
 One-time setup, done by hand in the Neon console:
 
@@ -69,6 +70,22 @@ One-time setup, done by hand in the Neon console:
 3. In the SQL editor, on each branch, run `CREATE EXTENSION IF NOT EXISTS vector;`. Check with `SELECT extversion FROM pg_extension WHERE extname = 'vector';`.
    A branch created after the extension is enabled on `main` inherits it; keep the statement on each branch anyway.
 4. From Connect on the `dev` branch, copy the pooled string into `DATABASE_URL` and the direct string into `DATABASE_URL_UNPOOLED` in `apps/api/.env`.
+
+### Local database (Docker)
+
+An offline Postgres 18 with pgvector, for working without Neon:
+
+```bash
+docker compose up -d --wait   # waits until healthy
+```
+
+Then, in `apps/api/.env`, use the commented local `DATABASE_URL` and `DATABASE_URL_UNPOOLED` from `apps/api/.env.example` instead of the Neon ones, and run `pnpm --filter @hush/api db:migrate` and `db:seed`. `docker compose down -v` wipes the data.
+
+If host port 5432 is taken, pick another and make the URLs match:
+
+```bash
+HUSH_DB_PORT=55432 docker compose up -d --wait   # and use :55432 in both URLs
+```
 
 ### Migrations
 

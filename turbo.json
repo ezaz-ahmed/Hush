@@ -17,6 +17,11 @@
       "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/eslint.config.js"],
       "outputs": ["coverage/**"]
     },
+    "test:int": {
+      "dependsOn": ["^build"],
+      "cache": false,
+      "passThroughEnv": ["DOCKER_*", "TESTCONTAINERS_*"]
+    },
     "dev": { "dependsOn": ["^build"], "cache": false, "persistent": true }
   }
 }

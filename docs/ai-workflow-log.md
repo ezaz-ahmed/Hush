@@ -13,6 +13,13 @@ Format:
 - **Source:** commit sha(s) and/or PR number
 ```
 
+## 2026-11-19: Local Docker DB and Testcontainers integration tests (#16)
+
+- **Context:** Issue #16 adds `docker-compose.yml`, `startTestDb()` and `pnpm test:int`. The spec draft assumed Postgres 17 and no `allowBuilds` changes. Neon reported `18.7`. pnpm 12 failed `install --frozen-lockfile` with `ERR_PNPM_IGNORED_BUILDS` for `cpu-features`, `protobufjs` and `ssh2`, pulled in by testcontainers. A local container already held port 5432.
+- **Decision:** Image pinned to `pgvector/pgvector:0.8.7-pg18` to match Neon. The user chose to deny all three packages in `allowBuilds` (the pure-JS fallbacks work). Vitest `projects` no longer honour `--dir src`, so the unit project excludes `**/dist/**`. Compose reads `HUSH_DB_PORT` (default 5432, still bound to 127.0.0.1) and the URLs must use the same port.
+- **Verified by:** `pnpm test:int` against a real container; `DOCKER_HOST=unix:///nonexistent pnpm test` passes; `dist/` has no `testing/` or `*.int.test.js`; full gate passing.
+- **Source:** PR for #16
+
 ## 2026-11-19: Seed guard checks the host pg actually connects to (#15)
 
 - **Context:** Issue #15 adds `db:seed`, which must never write to production. Neon `main` and `dev` URLs look alike, so the user chose a host allow-list: localhost, or an exact match of an optional `SEED_ALLOWED_HOST`, plus a `NODE_ENV` check. In ship review the security and code reviewers found that `pg` lets a `?host=` / `?hostaddr=` query parameter override the URL host. So `postgresql://…@localhost/db?host=<prod>` passed the guard and connected to prod. They also found that `pg`/DNS error messages printed the host, and that the build agent had deleted existing `.env.example` comments.
