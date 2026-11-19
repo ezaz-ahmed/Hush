@@ -126,7 +126,7 @@ The API uses the Fastify adapter. Do not use Express types (`Request`/`Response`
 - Keep changes scoped to the issue. Mention unrelated problems you notice instead of fixing them silently.
 - Do not add new dependencies without saying why and checking they are maintained.
 - When you are unsure about intended behaviour, ask rather than guess.
-- Ticket flow: spec (`SPEC.md`) → plan (`tasks/`) → build → review → PR. `/ship-issue N` runs it end to end ([skill](.claude/skills/ship-issue/SKILL.md)). The user reviews and merges every PR; agents never merge.
+- Ticket flow: spec (`SPEC.md`) → plan (`tasks/`) → build → review → PR. `/ship-issue N` runs it end to end ([skill](.claude/skills/ship-issue/SKILL.md)); `/learn-issue N` walks the same flow hands-on, with the user writing the code ([skill](.claude/skills/learn-issue/SKILL.md)). The user reviews and merges every PR; agents never merge.
 - After a notable decision or correction, add an entry to [`docs/ai-workflow-log.md`](docs/ai-workflow-log.md), using the format at the top of that file.
 
 ## Commits
