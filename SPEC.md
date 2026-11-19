@@ -1,48 +1,71 @@
-# Spec: Select content sources and document licences
+# Spec: Write fictional clinic content
 
 ## Objective
 
-Hush answers only from its knowledge base and shows retrieved text as cited answers, so every page in it is republished in a public repo. Before ingestion code exists (#19), pick sources we may freely copy and record what they require. The licence string chosen here is what #19 writes into `documents.license`.
+MedlinePlus (#17) covers the medical facts, but it knows nothing about our clinic. Questions such as "how much is a consultation?" or "do you deliver to my area?" would get the no-answer response, because Hush answers only from its knowledge base (CLAUDE.md rule 6). This ticket writes that clinic knowledge as original markdown that #19 can ingest.
 
-**Acceptance criteria (from issue #17):**
+**Acceptance criteria (from issue #18):**
 
-- [ ] Sources chosen with reuse rights: MedlinePlus (NLM-authored pages only) and own original content
-- [ ] `docs/content-sources.md` lists each source, licence and required attribution
-- [ ] Topics covered: hair loss, weight management, sexual health, general telehealth
+- [ ] Clinic overview, services, how consultations work, delivery, pricing FAQ
+- [ ] Clear scope statement: what the assistant can and cannot help with
+- [ ] Stored as markdown in `content/clinic/`
 
 **Amended vs the issue:**
 
-- A licence identifier per source (the `documents.license` value).
-- A page list per topic, so #19 knows what to load.
-- A "no dosing" rule for chosen pages (safety, not licensing).
+- The clinic is named **Hush Health**, and Hush is its assistant.
+- Each file starts with YAML frontmatter holding `title` and `license`, which #19 reads into `documents.title` and `documents.license`. There's no `url`, because the column is nullable and own content has no URL.
+- Prices are a few round fees in BDT. They're clearly fictional, but concrete enough for FAQ and eval questions.
+- The scope page also says how emergencies are handled (call 999) and that Hush doesn't diagnose or give doses, which matches the guardrails (rule 5).
 
-**Out of scope:** saving page text into `content/` (this ticket only lists pages; flagged on #19 since no issue owns it), the fictional clinic content (#18), ingestion code (#19), NHS and other sources (practice project; MedlinePlus is enough and simplest to license).
+**Out of scope:** parsing frontmatter and storing documents (#19), chunking (#20), saving MedlinePlus page text into `content/` (flagged on #19, no owner yet), the planted prompt-injection document (#23), and any guardrail code. This ticket only writes text.
 
 ## Risk
 
-Not high-risk under CLAUDE.md: docs only. Real risks: copying copyrighted text (mitigated by public-domain pages only) and pages that state doses, which would let retrieval surface dosing advice Hush must refuse (rule 5).
+Not high-risk under CLAUDE.md, since it's content only and has no code. The real risk is that retrieval quotes this text to patients word for word:
+
+- A dose or medicine recommendation would let Hush give dosing advice it must refuse.
+- Wording such as "if you have X, you have Y" reads as a diagnosis.
+- An emergency mentioned without 999 could delay care.
+
+The content rules below prevent all three, and every file is reviewed against them.
 
 ## Design
 
-### Sources
+### Files
 
-| Source            | Licence                        | `documents.license`             | Attribution                                                     |
-| ----------------- | ------------------------------ | ------------------------------- | --------------------------------------------------------------- |
-| MedlinePlus (NLM) | US federal work, public domain | `LicenseRef-PublicDomain-USGov` | "Courtesy of MedlinePlus from the National Library of Medicine" |
-| Own content (#18) | Ours                           | `LicenseRef-Hush-Original`      | None                                                            |
+All files go in `content/clinic/`.
 
-SPDX has no public-domain id, so both use SPDX's `LicenseRef-` convention for custom ids.
+| File               | Covers                                                                                |
+| ------------------ | ------------------------------------------------------------------------------------- |
+| `overview.md`      | Who Hush Health is, where it operates (Bangladesh, online only), opening hours        |
+| `services.md`      | The three service areas: hair loss, weight management, sexual health                  |
+| `consultations.md` | How a consultation works, step by step: booking, questionnaire, video call, follow-up |
+| `delivery.md`      | How prescriptions are delivered, areas, timelines, discreet packaging                 |
+| `pricing-faq.md`   | Fees in BDT, payment methods, refunds, as question-and-answer headings                |
+| `scope.md`         | What the Hush assistant can and cannot help with, and emergencies (999)               |
 
-The clinic is in **Bangladesh**. Medical facts come from MedlinePlus; anything local (emergency number 999, how the service works) is own content in #18.
+### Frontmatter
 
-### Rules for MedlinePlus pages
+```yaml
+---
+title: How consultations work
+license: LicenseRef-Hush-Original
+---
+```
 
-1. **NLM-authored health topic summaries only.** No A.D.A.M. encyclopedia, no drug monographs, no images. Those are copyrighted by third parties.
-2. **No dosing.** Skip pages that state medication doses.
+The `license` value must match [docs/content-sources.md](docs/content-sources.md) exactly.
+
+### Content rules
+
+1. **No doses and no medicine names.** Say "a clinician may prescribe treatment", never what or how much.
+2. **No diagnosis.** Describe what the clinic offers, not what a symptom means.
+3. **Emergencies point to 999.** Any mention of urgent symptoms says to call 999 or go to the nearest hospital, not to book a consultation.
+4. **Clearly fictional.** No real people, phone numbers, addresses or company names.
+5. **Headings stand alone.** #20 chunks by heading, so each `##` section must make sense on its own, without "as mentioned above". FAQ entries use the question as the heading.
 
 ### Deliverables
 
-- `docs/content-sources.md`: the sources table, the two rules, and a topic → pages table (title, URL).
-- `CLAUDE.md` layout: content sources doc no longer "planned".
-- `docs/ai-workflow-log.md` entry: MedlinePlus-only decision and why.
-- Comment on #19 noting nobody owns saving page text into `content/` yet.
+- The six files above in `content/clinic/`.
+- `docs/content-sources.md`: one line pointing at `content/clinic/` for own content.
+- `CLAUDE.md` layout: `content/` is no longer "planned".
+- `docs/ai-workflow-log.md` entry, if a notable decision comes up during the build.
