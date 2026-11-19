@@ -59,7 +59,7 @@ apps/api         NestJS API (Fastify)
 packages/shared  shared types, zod schemas, utilities
 content/         (planned) knowledge base markdown (with licence metadata)
 evals/           (planned) golden sets, metrics, results history
-docs/            AI workflow log, retired specs; planned: PDPA mapping, content sources, error analysis
+docs/            AI workflow log, retired specs, content sources; planned: PDPA mapping, error analysis
 docs/specs/      retired specs, one per ticket
 ```
 
