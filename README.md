@@ -77,5 +77,6 @@ Run from the repo root as `pnpm --filter @hush/api db:<name>`. Files live in `ap
 - `db:generate` writes a migration from schema changes. No database needed.
 - `db:migrate` applies pending migrations. Uses `DATABASE_URL_UNPOOLED`.
 - `db:studio` opens Drizzle Studio. Uses `DATABASE_URL_UNPOOLED`.
+- `db:seed` inserts fake dev users, consents and conversations (fixed `5eed...` ids). Uses `DATABASE_URL`. For a non-local host, set `SEED_ALLOWED_HOST` in `apps/api/.env` to that host's name; otherwise it refuses, as it does when `NODE_ENV=production`. Rerunning inserts nothing and does not reset rows you edited.
 
 See [SPEC.md](SPEC.md) for the project's conventions and boundaries.

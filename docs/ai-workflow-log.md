@@ -13,6 +13,13 @@ Format:
 - **Source:** commit sha(s) and/or PR number
 ```
 
+## 2026-11-19: Seed guard checks the host pg actually connects to (#15)
+
+- **Context:** Issue #15 adds `db:seed`, which must never write to production. Neon `main` and `dev` URLs look alike, so the user chose a host allow-list: localhost, or an exact match of an optional `SEED_ALLOWED_HOST`, plus a `NODE_ENV` check. In ship review the security and code reviewers found that `pg` lets a `?host=` / `?hostaddr=` query parameter override the URL host. So `postgresql://…@localhost/db?host=<prod>` passed the guard and connected to prod. They also found that `pg`/DNS error messages printed the host, and that the build agent had deleted existing `.env.example` comments.
+- **Decision:** The guard refuses any `DATABASE_URL` with a `host` or `hostaddr` query parameter. A dependency on `pg-connection-string` was considered and not added. `run-seed.ts` prints only guard and env messages; other errors print `seed failed <code>`. The `.env.example` comments are restored and `SEED_ALLOWED_HOST` is commented out. Messages, audit logs and documents are not seeded, because encryption (#45), the audit service (#43) and ingestion (#22) don't exist yet.
+- **Verified by:** Regression tests for the bypass and error messages. A probe against `pg-connection-string` 2.14.1: uppercase keys are ignored by pg, a percent-encoded `host` key is refused, and multi-host URLs are refused. Smoke runs with fake shell env exit 1 and print no host. Full gate passing. The real double run on Neon `dev` is left to the user.
+- **Source:** `docs/specs/15-seed-script-for-development-data.md` (after retirement), PR for #15
+
 ## 2026-11-19: Separate audit pseudonym so deleted users leave no linkable id (#14)
 
 - **Context:** Issue #14 adds `users`, `consents`, `audit_logs` and `deletion_requests`. The planning agent proposed letting `audit_logs` and `deletion_requests` keep the plain `users.id` after deletion, since it links to nothing. The user rejected that: a deleted user must leave no linkable id. Blanking ids in audit rows would break CLAUDE.md rule 4 (append-only), so the agent asked instead of improvising.
