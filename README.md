@@ -96,4 +96,8 @@ Run from the repo root as `pnpm --filter @hush/api db:<name>`. Files live in `ap
 - `db:studio` opens Drizzle Studio. Uses `DATABASE_URL_UNPOOLED`.
 - `db:seed` inserts fake dev users, consents and conversations (fixed `5eed...` ids). Uses `DATABASE_URL`. For a non-local host, set `SEED_ALLOWED_HOST` in `apps/api/.env` to that host's name; otherwise it refuses, as it does when `NODE_ENV=production`. Rerunning inserts nothing and does not reset rows you edited.
 
+### Ingest
+
+`pnpm ingest` (repo root) reads every `content/**/*.md`, validates its `title`/`license`/`url` frontmatter, strips HTML comments, normalises whitespace and upserts one `documents` row per file, keyed by path. Uses `DATABASE_URL`. Any invalid file stops the run before anything is written. No production guard: the knowledge base belongs in every environment.
+
 See [SPEC.md](SPEC.md) for the project's conventions and boundaries.
