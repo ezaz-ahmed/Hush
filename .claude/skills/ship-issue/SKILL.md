@@ -13,8 +13,8 @@ Argument: the issue number `N`.
 
 | Work                                     | Agent model | Effort  |
 | ---------------------------------------- | ----------- | ------- |
-| Spec, plan, review                       | `opus`      | medium  |
-| Build, test                              | `sonnet`    | medium  |
+| Spec, review                             | `opus`      | medium  |
+| Plan, build, test                        | `sonnet`    | medium  |
 | Branch checks, commit, push, PR creation | `haiku`     | default |
 
 Pass `model` and `effort` on every Agent call. One subagent per plan task.
@@ -29,7 +29,7 @@ Otherwise, only stop for the user when a subagent raises a real question (intend
 
 1. **Recon (haiku).** `gh issue view N`; look for an existing branch (`git branch -a | grep "/N-"`) and PR. Reuse an existing branch; otherwise create `N-<slug>` from `main`. Report what was found.
 2. **Spec (opus).** Retire the current `SPEC.md` with `git mv SPEC.md docs/specs/<previous-branch>.md` per CLAUDE.md, then run `/agent-skills:spec` (skill `agent-skills:spec-driven-development`) to write the new `SPEC.md` from the issue.
-3. **Plan (opus).** Run `/agent-skills:plan` (skill `agent-skills:planning-and-task-breakdown`) to write `tasks/plan.md` and `tasks/todo.md` (gitignored, never commit). Tasks must be small, ordered, each with a verification step.
+3. **Plan (sonnet).** Run `/agent-skills:plan` (skill `agent-skills:planning-and-task-breakdown`) to write `tasks/plan.md` and `tasks/todo.md` (gitignored, never commit). Tasks must be small, ordered, each with a verification step.
 4. **Build (sonnet, one agent per task, sequential unless tasks are independent).** Each agent runs `/agent-skills:build` (skill `agent-skills:incremental-implementation`, with `agent-skills:test-driven-development` for logic) on exactly one task, ticks it in `tasks/todo.md`, and does not commit.
 5. **Test (sonnet).** Run `/agent-skills:test` (skill `agent-skills:test-driven-development`): fill coverage gaps, then `pnpm lint && pnpm typecheck && pnpm test`.
 6. **Review (opus).** Run `/agent-skills:review` (skill `agent-skills:code-review-and-quality`) on the branch diff. Send must-fix findings back to a sonnet build agent, then re-review. Max two loops, then escalate to the user.
