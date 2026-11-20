@@ -51,7 +51,7 @@ export async function ingest(
   for (const source of removed) results.push({ source, status: 'removed' });
 
   const todo = prepared
-    .filter((d) => results.find((r) => r.source === d.source)?.status !== 'unchanged')
+    .filter((d) => stored.get(d.source) !== d.contentHash)
     .map((doc) => {
       const docChunks = chunkDocument(doc.body);
       if (docChunks.length === 0) throw new Error(`${doc.source}: no chunks`);
