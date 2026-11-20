@@ -70,4 +70,22 @@ describe('validateEnv', () => {
       ...base,
     });
   });
+
+  describe('VOYAGE_API_KEY', () => {
+    it('is optional (key absent when unset)', () => {
+      expect(validateEnv(base)).toStrictEqual({ PORT: 5555, ...base });
+    });
+
+    it('treats a blank value as unset (key absent from the result)', () => {
+      expect(validateEnv({ ...base, VOYAGE_API_KEY: '' })).toStrictEqual({ PORT: 5555, ...base });
+    });
+
+    it('passes a set value through', () => {
+      expect(validateEnv({ ...base, VOYAGE_API_KEY: 'pa-test' })).toStrictEqual({
+        PORT: 5555,
+        ...base,
+        VOYAGE_API_KEY: 'pa-test',
+      });
+    });
+  });
 });

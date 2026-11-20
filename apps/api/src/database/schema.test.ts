@@ -1,5 +1,6 @@
 import { getTableConfig, PgDialect, type PgColumn } from 'drizzle-orm/pg-core';
 import { describe, expect, expectTypeOf, it } from 'vitest';
+import { EMBEDDING_DIMENSIONS } from '../embedding/embedding-provider.js';
 import {
   auditActorType,
   auditLogs,
@@ -57,7 +58,10 @@ describe('schema', () => {
   });
 
   it('uses 1024-dimension embeddings and a generated tsv', () => {
-    expect(col(chunks, 'embedding')).toMatchObject({ dimensions: 1024, notNull: true });
+    expect(col(chunks, 'embedding')).toMatchObject({
+      dimensions: EMBEDDING_DIMENSIONS,
+      notNull: true,
+    });
     const tsv = col(chunks, 'tsv');
     expect(tsv.generated).toBeDefined();
     expect(tsv.generated?.type).toBe('always');
