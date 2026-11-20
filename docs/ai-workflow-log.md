@@ -13,6 +13,13 @@ Format:
 - **Source:** commit sha(s) and/or PR number
 ```
 
+## 2026-11-20: Re-ingestion contract: hash skip, removed files deleted, Voyage required (#22)
+
+- **Context:** Issue #22 asks to skip unchanged documents and replace stale chunks, but doesn't say what happens to files removed from `content/`, or which embedder `pnpm ingest` uses now that it writes chunks.
+- **Decision:** No migration: the #19 `content_hash` is reused, prefixed with `HASH_VERSION` so bumping it forces a full re-embed (comments beside `DEFAULT_CHUNK_OPTIONS` and the Voyage model default say so). Changed documents keep their id; their chunks are replaced wholesale. The user chose to delete documents whose file is gone (chunks cascade); the "zero files" guard prevents a bad path wiping the table. The user chose to require `VOYAGE_API_KEY` for `pnpm ingest` with no fake fallback, since fake vectors in a shared DB would silently break retrieval. All embedding happens in one call before a single write transaction, and a vector-count mismatch throws, so a provider failure writes nothing. Concurrent-ingest locking is out of scope.
+- **Verified by:** `ingest.int.test.ts` (17 Testcontainers tests incl. no-duplicates re-run, changed/removed docs, embedding failure, wrong vector count), `prepare.test.ts`, `ingest.test.ts`; review plus code, security and test-engineer agents all GO.
+- **Source:** PR for #22
+
 ## 2026-11-20: Chunking contract: heading prefix, char budget, chunks not stored yet (#20)
 
 - **Context:** Issue #20 asks for heading-aware chunking with configurable size and overlap, but leaves the size unit, the heading's place in chunk text and the break rules undefined. `chunks.embedding` is `NOT NULL`, so rows can't be written before #21.

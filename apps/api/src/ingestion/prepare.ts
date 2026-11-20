@@ -9,6 +9,9 @@ export const frontmatterSchema = z.strictObject({
   url: z.url({ protocol: /^https?$/ }).optional(),
 });
 
+// Bump when chunk options or the embedding model change: forces re-chunk and re-embed of all docs.
+export const HASH_VERSION = '2';
+
 export interface PreparedDocument {
   source: string;
   title: string;
@@ -54,7 +57,7 @@ export function prepareDocument(source: string, raw: string): PreparedDocument {
   if (body === '') return fail('empty body');
 
   const contentHash = createHash('sha256')
-    .update([title, license, url ?? '', body].join('\n'))
+    .update([HASH_VERSION, title, license, url ?? '', body].join('\n'))
     .digest('hex');
   return { source, title, license, url, contentHash, body };
 }

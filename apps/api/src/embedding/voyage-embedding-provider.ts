@@ -57,6 +57,7 @@ export class VoyageEmbeddingProvider implements EmbeddingProvider {
 
   constructor(o: VoyageOptions) {
     this.#apiKey = o.apiKey;
+    // changing this requires bumping HASH_VERSION in ingestion/prepare.ts
     this.model = o.model ?? 'voyage-3.5';
     this.batchSize = o.batchSize ?? 128;
     this.maxAttempts = o.maxAttempts ?? 5;
