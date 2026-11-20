@@ -43,6 +43,9 @@ const retryAfterMs = (res: Response): number | undefined => {
   return h && /^\d+$/.test(h) ? Number(h) * 1000 : undefined;
 };
 
+// changing this requires bumping HASH_VERSION in ingestion/prepare.ts
+export const DEFAULT_VOYAGE_MODEL = 'voyage-3.5';
+
 export class VoyageEmbeddingProvider implements EmbeddingProvider {
   readonly #apiKey: string;
   private readonly model: string;
@@ -57,8 +60,7 @@ export class VoyageEmbeddingProvider implements EmbeddingProvider {
 
   constructor(o: VoyageOptions) {
     this.#apiKey = o.apiKey;
-    // changing this requires bumping HASH_VERSION in ingestion/prepare.ts
-    this.model = o.model ?? 'voyage-3.5';
+    this.model = o.model ?? DEFAULT_VOYAGE_MODEL;
     this.batchSize = o.batchSize ?? 128;
     this.maxAttempts = o.maxAttempts ?? 5;
     this.baseDelayMs = o.baseDelayMs ?? 500;
