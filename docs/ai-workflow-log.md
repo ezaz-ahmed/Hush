@@ -20,6 +20,13 @@ Format:
 - **Verified by:** `ingest.int.test.ts` (fixture ingested with the flag off; skipped and existing row deleted with it on; written red first), `hash-inputs.test.ts` (fails when `overlapChars` changes).
 - **Source:** PR for chore/audit-fixes
 
+## 2026-11-20: LLM provider uses the Anthropic SDK, pinned and env-hardened (#24)
+
+- **Context:** Issue #24 needs a streaming `LlmProvider` with an Anthropic implementation. Raw fetch (as Voyage uses) would mean hand-writing an SSE parser and retry logic. `pnpm add` installed SDK 1.10.0 although npm latest is 1.12.0. Review found the SDK reads `ANTHROPIC_BASE_URL` and OpenTelemetry content-mode env vars that bypass zod.
+- **Decision:** The user approved the official `@anthropic-ai/sdk`, pinned exactly at 1.10.0 (pnpm's release-age default held back 1.11/1.12, released within the last day). The user chose `ANTHROPIC_MODEL` default `claude-haiku-5-5`. The client pins `baseURL`, sets `openTelemetry: false` and `logLevel: 'off'`, so env can't redirect user text or put it in spans or logs. `ANTHROPIC_CUSTOM_HEADERS` is knowingly left alone (it can only reach api.anthropic.com). SDK 1.10.0 sends the key as `Authorization: Bearer`, not `x-api-key`; mid-read aborts end the SDK stream silently, so the provider re-checks `signal.aborted`. Errors are fresh `LlmError`s with no `cause` and no content. Redaction stays the caller's job (rule 1).
+- **Verified by:** `anthropic-llm-provider.test.ts` (fake fetch with real SSE; leak test with marker and key; env-override tests; no console calls), `mock-llm-provider.test.ts`, `env.test.ts`; review plus code, security and test-engineer agents all GO.
+- **Source:** PR for #24
+
 ## 2026-11-20: Prompt-injection fixture lives in `content/fixtures/` and is ingested for real (#23)
 
 - **Context:** Issue #23 needs a hostile document to later prove retrieved content is treated as data, not instructions. It could be kept out of the live knowledge base or ingested like real content.

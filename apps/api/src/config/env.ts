@@ -10,13 +10,19 @@ export const envSchema = z.object({
   DATABASE_URL_UNPOOLED: postgresUrl.optional(),
   // Optional: only ingest (#22) and, later, query embedding need it; health, dev and tests run without it.
   VOYAGE_API_KEY: z.string().min(1).optional(),
+  // Optional: only chat needs it; health, dev and tests run without it.
+  ANTHROPIC_API_KEY: z.string().min(1).optional(),
+  ANTHROPIC_MODEL: z.string().min(1).default('claude-haiku-5-5'),
 });
 
 export type Env = z.infer<typeof envSchema>;
 
-// `KEY=` in .env yields '': drop it for the DB vars and VOYAGE_API_KEY so it reads as unset (key absent, not undefined).
+// `KEY=` in .env yields '': drop it for the DB vars, VOYAGE_API_KEY and the ANTHROPIC_* vars so it reads as unset (key absent; ANTHROPIC_MODEL falls back to its default).
 const blankIsUnset = ([key, value]: [string, unknown]): boolean =>
-  !((key.startsWith('DATABASE_URL') || key === 'VOYAGE_API_KEY') && value === '');
+  !(
+    (key.startsWith('DATABASE_URL') || key === 'VOYAGE_API_KEY' || key.startsWith('ANTHROPIC_')) &&
+    value === ''
+  );
 
 export const validateEnv = (raw: Record<string, unknown>): Env =>
   parseEnv(envSchema, Object.fromEntries(Object.entries(raw).filter(blankIsUnset)));
