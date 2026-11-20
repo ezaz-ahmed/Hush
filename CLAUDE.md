@@ -21,7 +21,7 @@ A privacy-first RAG assistant answering patient FAQs for a fictional telehealth 
 - **Tests:** Vitest (unit, v8 coverage), Testcontainers with `pgvector/pgvector` (integration, `*.int.test.ts`). Planned: Playwright (e2e)
 - **Evals (planned):** `evals/` folder, run with `pnpm eval`
 
-Built today: the web home page showing API health, the API's `GET /health` with zod env validation and `ZodValidationPipe`, shared health and error schemas, and `pnpm ingest`, which loads `content/**/*.md` into `documents` (no chunks or embeddings yet). Anything marked planned does not exist yet; check the code before assuming a piece exists.
+Built today: the web home page showing API health, the API's `GET /health` with zod env validation and `ZodValidationPipe`, shared health and error schemas, and `pnpm ingest`, which loads `content/**/*.md` into `documents` and `chunks` (embedded; unchanged files skipped by content hash, removed files deleted). Anything marked planned does not exist yet; check the code before assuming a piece exists.
 
 ## Commands
 
@@ -58,7 +58,7 @@ pnpm --filter @hush/api exec vitest run --project unit -t "test name"
 apps/web         Next.js app
 apps/api         NestJS API (Fastify)
 packages/shared  shared types, zod schemas, utilities
-content/         knowledge base markdown with licence frontmatter; today only clinic/ (own content)
+content/         knowledge base markdown with licence frontmatter; clinic/ (own content) and fixtures/ (planted prompt-injection test fixture)
 evals/           (planned) golden sets, metrics, results history
 docs/            AI workflow log, retired specs, content sources; planned: PDPA mapping, error analysis
 docs/specs/      retired specs, one per ticket
