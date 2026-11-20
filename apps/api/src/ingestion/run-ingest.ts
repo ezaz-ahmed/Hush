@@ -10,7 +10,8 @@ import { ingest, ingestErrorMessage, type IngestStatus } from './ingest.js';
 // Same as drizzle.config.ts: loadEnvFile never overrides vars already set in the process.
 if (existsSync('.env')) process.loadEnvFile('.env');
 
-// No production guard: ingest only upserts our own committed content, safe to run anywhere.
+// Safe to run anywhere: ingest only upserts our own committed content. In production it skips
+// content/fixtures/ (the planted prompt-injection doc) so patients can never retrieve it.
 try {
   const env = validateEnv(process.env);
   if (!env.VOYAGE_API_KEY) throw new Error('Invalid env: VOYAGE_API_KEY is required for ingest');
@@ -18,7 +19,11 @@ try {
   const pool = new Pool({ connectionString: env.DATABASE_URL });
   try {
     const repoRoot = fileURLToPath(new URL('../../../../', import.meta.url));
-    const results = await ingest(drizzle({ client: pool, schema }), repoRoot, embedder);
+    // validateEnv strips NODE_ENV; normalised like the seed guard.
+    const excludeFixtures = process.env.NODE_ENV?.trim().toLowerCase() === 'production';
+    const results = await ingest(drizzle({ client: pool, schema }), repoRoot, embedder, {
+      excludeFixtures,
+    });
     for (const { source, status } of results) console.log(`${status} ${source}`);
     const count = (s: IngestStatus) => results.filter((r) => r.status === s).length;
     console.log(

@@ -10,7 +10,7 @@ import { prepareDocument, type PreparedDocument } from './prepare.js';
 export type IngestStatus = 'added' | 'changed' | 'unchanged' | 'removed';
 
 /**
- * Syncs content/**.md into documents + chunks. Unchanged hashes are skipped; changed or new
+ * Syncs content/**.md into documents + chunks. `excludeFixtures` skips content/fixtures/ (set in production). Unchanged hashes are skipped; changed or new
  * documents are re-chunked and re-embedded; documents whose file is gone are deleted.
  * All-or-nothing: embedding happens before the single write transaction.
  */
@@ -18,10 +18,13 @@ export async function ingest(
   db: Db,
   repoRoot: string,
   embedder: EmbeddingProvider,
+  { excludeFixtures = false }: { excludeFixtures?: boolean } = {},
 ): Promise<{ source: string; status: IngestStatus }[]> {
   const files = (await readdir(join(repoRoot, 'content'), { recursive: true }))
     .filter((f) => f.endsWith('.md'))
     .map((f) => f.replaceAll('\\', '/'))
+    // Excluded fixtures count as gone, so an already-ingested fixture row is deleted as removed.
+    .filter((f) => !(excludeFixtures && f.startsWith('fixtures/')))
     .sort();
 
   if (files.length === 0) throw new Error('content/: no markdown files found');
