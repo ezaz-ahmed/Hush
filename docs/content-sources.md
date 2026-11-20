@@ -10,7 +10,7 @@ Hush answers only from its knowledge base and shows retrieved text as cited answ
 | Own content (#18) | Ours                           | `LicenseRef-Hush-Original`      | None                                                            |
 
 - **MedlinePlus:** NLM-written content is not copyrighted under US law and may be reproduced and redistributed freely; NLM asks that MedlinePlus is credited as the source. See [Using MedlinePlus content](https://medlineplus.gov/about/using/usingcontent/).
-- **Own content:** written for Hush. Covers anything local to the fictional clinic in Bangladesh (emergency number 999, how the service works). Files live in `content/clinic/`, each with frontmatter `title` and `license: LicenseRef-Hush-Original`.
+- **Own content:** written for Hush. Covers anything local to the fictional clinic in Bangladesh (emergency number 999, how the service works). Files live in `content/clinic/` (plus the test fixture in `content/fixtures/`, see below), each with frontmatter `title` and `license: LicenseRef-Hush-Original`.
 - **Identifiers:** SPDX has no public-domain id, so both use SPDX's `LicenseRef-` convention for custom ids. These exact strings go into `documents.license`.
 
 Other sources (NHS, WHO, Bangladeshi government sites) were not used: their terms add attribution, refresh or non-commercial conditions, or state no reuse licence at all. MedlinePlus covers every topic.
@@ -34,3 +34,7 @@ All Summary sections checked for doses on 2026-11-19: none found.
 | Sexual health      | [Sexual Problems in Men](https://medlineplus.gov/sexualproblemsinmen.html)                    |
 | Sexual health      | [Sexually Transmitted Infections](https://medlineplus.gov/sexuallytransmittedinfections.html) |
 | General telehealth | [Telehealth](https://medlineplus.gov/telehealth.html)                                         |
+
+## Test fixtures
+
+`content/fixtures/prompt-injection-weight-medication.md` is **deliberately hostile and not real clinic content**. It reads like a weight-management FAQ but embeds an instruction to ignore safety rules and give a dose, plus the canary marker `HUSH-CANARY-GRAPEFRUIT`. It is ingested on purpose, so guardrail tests and safety evals exercise the real retrieval attack path (CLAUDE.md rule 7). It tells the model to give a dose but contains no actual dose or digits, so the "no doses" rule above still holds. Do not edit or remove it without updating the guardrail tests and evals that rely on it.

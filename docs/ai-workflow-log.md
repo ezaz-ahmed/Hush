@@ -13,6 +13,13 @@ Format:
 - **Source:** commit sha(s) and/or PR number
 ```
 
+## 2026-11-20: Prompt-injection fixture lives in `content/fixtures/` and is ingested for real (#23)
+
+- **Context:** Issue #23 needs a hostile document to later prove retrieved content is treated as data, not instructions. It could be kept out of the live knowledge base or ingested like real content.
+- **Decision:** The user chose to put it at `content/fixtures/prompt-injection-weight-medication.md` and ingest it into the live knowledge base, so tests and evals exercise the realistic retrieval attack path. It tells the model to give a dose but contains no digits, so retrieval can never quote a dose from it (content-sources rule 2); a hijacked model could still invent one, which the dosing guardrail must catch. It carries the canary `HUSH-CANARY-GRAPEFRUIT`, which later guardrail tests and evals assert never appears in an answer. Documented in `docs/content-sources.md`.
+- **Verified by:** `injection-fixture.test.ts` (file, canary, no digits, chunking).
+- **Source:** PR for #23
+
 ## 2026-11-20: Re-ingestion contract: hash skip, removed files deleted, Voyage required (#22)
 
 - **Context:** Issue #22 asks to skip unchanged documents and replace stale chunks, but doesn't say what happens to files removed from `content/`, or which embedder `pnpm ingest` uses now that it writes chunks.
