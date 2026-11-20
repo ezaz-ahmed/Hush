@@ -1,6 +1,7 @@
+import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { prepareDocument } from './prepare.js';
+import { HASH_VERSION, prepareDocument } from './prepare.js';
 
 const SRC = 'content/clinic/x.md';
 const doc = (fm: string, body = '# Hi\n\nText.') => `---\n${fm}\n---\n${body}\n`;
@@ -17,6 +18,14 @@ describe('prepareDocument', () => {
       body: '# Hi\n\nText.',
     });
     expect(d.contentHash).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it('prefixes the hash input with HASH_VERSION', () => {
+    const sha = (parts: string[]) => createHash('sha256').update(parts.join('\n')).digest('hex');
+    const parts = ['T', 'LicenseRef-Hush-Original', '', '# Hi\n\nText.'];
+    const { contentHash } = prepareDocument(SRC, doc(FM));
+    expect(contentHash).not.toBe(sha(parts));
+    expect(contentHash).toBe(sha([HASH_VERSION, ...parts]));
   });
 
   it('returns the url when present', () => {

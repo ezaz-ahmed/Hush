@@ -8,6 +8,7 @@ export interface ChunkOptions {
   overlapChars: number;
 }
 
+// changing this requires bumping HASH_VERSION in ingestion/prepare.ts
 export const DEFAULT_CHUNK_OPTIONS: ChunkOptions = { maxChars: 1000, overlapChars: 150 };
 
 export interface Chunk {

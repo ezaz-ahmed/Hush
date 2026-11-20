@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { EmbeddingError } from '../embedding/embedding-provider.js';
 import { ingestErrorMessage } from './ingest.js';
 
 describe('ingestErrorMessage', () => {
@@ -9,6 +10,12 @@ describe('ingestErrorMessage', () => {
     expect(ingestErrorMessage(new Error('Invalid env: DATABASE_URL'))).toBe(
       'Invalid env: DATABASE_URL',
     );
+  });
+
+  it('passes EmbeddingError messages through (they never carry input text or keys)', () => {
+    expect(
+      ingestErrorMessage(new EmbeddingError('embedding request failed: status 429 (batch 1)')),
+    ).toBe('embedding request failed: status 429 (batch 1)');
   });
 
   it('hides everything else, keeping only a string code', () => {

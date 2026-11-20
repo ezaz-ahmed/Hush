@@ -37,7 +37,7 @@ export const documents = pgTable('documents', {
   title: text('title').notNull(),
   license: text('license').notNull(),
   url: text('url'),
-  // sha256 hex of title, license, url and normalised body (see SPEC).
+  // sha256 hex of HASH_VERSION, title, license, url and normalised body (see prepare.ts).
   contentHash: text('content_hash').notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
