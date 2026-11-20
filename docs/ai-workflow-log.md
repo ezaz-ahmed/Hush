@@ -13,6 +13,13 @@ Format:
 - **Source:** commit sha(s) and/or PR number
 ```
 
+## 2026-11-20: Chunking contract: heading prefix, char budget, chunks not stored yet (#20)
+
+- **Context:** Issue #20 asks for heading-aware chunking with configurable size and overlap, but leaves the size unit, the heading's place in chunk text and the break rules undefined. `chunks.embedding` is `NOT NULL`, so rows can't be written before #21.
+- **Decision:** `chunkDocument(body, options)` is a pure function; ingest doesn't store chunks yet (deferred to #21/#22). Size is counted in characters (default 1000, overlap 150), so no tokenizer dependency. The user chose to start each chunk's text with its nearest heading line, because `chunks.tsv` is built from text only and FAQ questions live in headings. The prefix counts toward `maxChars` and is dropped if it is over half the limit. Break preference is blank line > list item > sentence end > space > hard cut. A break type only counts if it fills at least half the budget, so a short opening sentence doesn't become its own chunk. Whitespace is exempt so words aren't hard-cut. A `1.` list marker is not a sentence end. The heading regex was rewritten to be linear after a security audit found quadratic backtracking.
+- **Verified by:** `chunk.test.ts` (unit, including every real `content/` file at default and small sizes), mutation checks by the review and test-engineer agents, a 200k-input fuzz run with no chunk over `maxChars` and no hang.
+- **Source:** PR for #20
+
 ## 2026-11-19: Ingestion contract: fail closed, upsert by source, hash includes metadata (#19)
 
 - **Context:** Issue #19 asks for `pnpm ingest` that normalises, strips boilerplate and stores metadata, but leaves "boilerplate", re-runs and the NOT NULL `content_hash` undefined. The #17 comment asked whether #19 should also save MedlinePlus text.
