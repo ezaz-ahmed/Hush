@@ -21,16 +21,18 @@ pnpm install
 
 Run these from the repo root. Each Turbo task runs in every workspace that defines it, and its results are cached.
 
-| Script              | What it does                                                                                      |
-| ------------------- | ------------------------------------------------------------------------------------------------- |
-| `pnpm dev`          | Starts every workspace in watch mode (web on http://localhost:3000). `@hush/shared` builds first. |
-| `pnpm build`        | Builds every workspace in dependency order, with shared before the apps.                          |
-| `pnpm lint`         | Runs ESLint in every workspace.                                                                   |
-| `pnpm typecheck`    | Runs `tsc --noEmit` in every workspace.                                                           |
-| `pnpm test`         | Runs Vitest once in every workspace.                                                              |
-| `pnpm test:int`     | Runs integration tests against a throwaway Postgres (needs Docker).                               |
-| `pnpm format`       | Formats the repo with Prettier.                                                                   |
-| `pnpm format:check` | Checks formatting without writing anything. Use it in CI.                                         |
+| Script               | What it does                                                                                      |
+| -------------------- | ------------------------------------------------------------------------------------------------- |
+| `pnpm dev`           | Starts every workspace in watch mode (web on http://localhost:3000). `@hush/shared` builds first. |
+| `pnpm build`         | Builds every workspace in dependency order, with shared before the apps.                          |
+| `pnpm lint`          | Runs ESLint in every workspace.                                                                   |
+| `pnpm typecheck`     | Runs `tsc --noEmit` in every workspace.                                                           |
+| `pnpm test`          | Runs Vitest once in every workspace.                                                              |
+| `pnpm test:coverage` | Runs Vitest with v8 coverage; reports land in `<workspace>/coverage/`.                            |
+| `pnpm test:int`      | Runs integration tests against a throwaway Postgres (needs Docker).                               |
+| `pnpm format`        | Formats the repo with Prettier.                                                                   |
+| `pnpm format:check`  | Checks formatting without writing anything. Use it in CI.                                         |
+| `pnpm ingest`        | Loads `content/**/*.md` into the database (see [Ingest](#ingest)).                                |
 
 To run a task for one workspace and everything it depends on:
 
@@ -49,7 +51,7 @@ packages/shared  @hush/shared  shared types and utilities, built to dist/
 
 ## API
 
-`GET /health` returns `{ "ok": true, "service": "api" }`. Env vars are documented in `apps/api/.env.example` and `apps/web/.env.example`. Both apps fail fast at startup with `Invalid env: <NAME>` on invalid values (API: `PORT`, default `5555`, plus `DATABASE_URL` (required) and `DATABASE_URL_UNPOOLED` (optional, read only by drizzle-kit), Neon strings that must be `postgres://` or `postgresql://`; web: `API_URL`, checked when `next.config` loads). CORS is off.
+`GET /health` returns `{ "ok": true, "service": "api" }`. Env vars are documented in `apps/api/.env.example` and `apps/web/.env.example`. Both apps fail fast at startup with `Invalid env: <NAME>` on invalid values (API: `PORT`, default `5555`, plus `DATABASE_URL` (required) and `DATABASE_URL_UNPOOLED` (optional, read only by drizzle-kit), Neon strings that must be `postgres://` or `postgresql://`, and `VOYAGE_API_KEY` (optional for the API, required by `pnpm ingest`); web: `API_URL`, checked when `next.config` loads). CORS is off.
 
 The browser never calls the API directly. The web app proxies `/api/*` to it, so `http://localhost:3000/api/health` reaches `http://localhost:5555/health`. The proxy target is `API_URL` (default `http://localhost:5555`). Next bakes rewrites into the build, so `API_URL` must be set when running `next build`, not only at start.
 
@@ -98,6 +100,8 @@ Run from the repo root as `pnpm --filter @hush/api db:<name>`. Files live in `ap
 
 ### Ingest
 
-`pnpm ingest` (repo root) reads every `content/**/*.md`, validates its `title`/`license`/`url` frontmatter, strips HTML comments, normalises whitespace and upserts one `documents` row per file, keyed by path. Uses `DATABASE_URL`. Any invalid file stops the run before anything is written. No production guard: the knowledge base belongs in every environment.
+`pnpm ingest` (repo root) reads every `content/**/*.md`, validates its `title`/`license`/`url` frontmatter, strips HTML comments, normalises whitespace and upserts one `documents` row per file, keyed by path. It splits each file into chunks and embeds them with Voyage (needs `VOYAGE_API_KEY`). Files whose content hash is unchanged are skipped, and rows for files removed from `content/` are deleted. Uses `DATABASE_URL`. Any invalid file or embedding failure stops the run before anything is written.
 
-See [SPEC.md](SPEC.md) for the project's conventions and boundaries.
+`content/fixtures/` holds a deliberately hostile test document (see [docs/content-sources.md](docs/content-sources.md)). It is ingested everywhere except `NODE_ENV=production`, where it is skipped and any stored copy deleted.
+
+See [CLAUDE.md](CLAUDE.md) for the project's conventions and boundaries.

@@ -245,6 +245,35 @@ describe('ingest (real Postgres)', () => {
     expect(await chunkRows()).toEqual(bChunks);
   });
 
+  it('ingests content/fixtures/ when excludeFixtures is off', async () => {
+    await write('content/a.md', md('A'));
+    await write('content/fixtures/evil.md', md('Evil'));
+
+    expect(
+      await ingest(testDb.db, root, new FakeEmbeddingProvider(), { excludeFixtures: false }),
+    ).toEqual([
+      { source: 'content/a.md', status: 'added' },
+      { source: 'content/fixtures/evil.md', status: 'added' },
+    ]);
+  });
+
+  it('skips content/fixtures/ when excludeFixtures is on, deleting an existing fixture row', async () => {
+    await write('content/a.md', md('A'));
+    await write('content/fixtures/evil.md', md('Evil'));
+    await run(); // fixture already in the DB, as in a prod DB ingested before this guard
+    const [a] = await rows();
+    const aChunks = await chunkRows().then((all) => all.filter((c) => c.documentId === a?.id));
+
+    expect(
+      await ingest(testDb.db, root, new FakeEmbeddingProvider(), { excludeFixtures: true }),
+    ).toEqual([
+      { source: 'content/a.md', status: 'unchanged' },
+      { source: 'content/fixtures/evil.md', status: 'removed' },
+    ]);
+    expect(await rows()).toEqual([a]);
+    expect(await chunkRows()).toEqual(aChunks);
+  });
+
   it('writes nothing when embedding fails, keeping old hash and chunks', async () => {
     await write('content/a.md', md('A')); // empty-DB case first
     await expect(run(failing)).rejects.toThrow('boom');

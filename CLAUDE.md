@@ -17,11 +17,11 @@ A privacy-first RAG assistant answering patient FAQs for a fictional telehealth 
 - **Web:** `apps/web` (`@hush/web`), Next.js App Router, TypeScript strict, Tailwind
 - **API:** `apps/api` (`@hush/api`), NestJS on the **Fastify** adapter (`@nestjs/platform-fastify`)
 - **Shared:** `packages/shared` (`@hush/shared`), types and zod schemas, built to `dist/`
-- **Database (planned):** Postgres on Neon with pgvector, Drizzle ORM and drizzle-kit migrations
+- **Database:** Postgres on Neon with pgvector, Drizzle ORM and drizzle-kit migrations
 - **Tests:** Vitest (unit, v8 coverage), Testcontainers with `pgvector/pgvector` (integration, `*.int.test.ts`). Planned: Playwright (e2e)
 - **Evals (planned):** `evals/` folder, run with `pnpm eval`
 
-Built today: the web home page showing API health, the API's `GET /health` with zod env validation and `ZodValidationPipe`, shared health and error schemas, and `pnpm ingest`, which loads `content/**/*.md` into `documents` and `chunks` (embedded; unchanged files skipped by content hash, removed files deleted). Anything marked planned does not exist yet; check the code before assuming a piece exists.
+Built today: the web home page showing API health, the API's `GET /health` with zod env validation and `ZodValidationPipe`, shared health and error schemas, the Drizzle schema with migrations and `db:seed` (refuses production), the embedding providers (`VoyageEmbeddingProvider` and `FakeEmbeddingProvider` behind `EmbeddingProvider`), and `pnpm ingest`, which loads `content/**/*.md` into `documents` and `chunks` (embedded; unchanged files skipped by content hash, removed files deleted; `content/fixtures/` skipped in production). Anything marked planned does not exist yet; check the code before assuming a piece exists.
 
 ## Commands
 
