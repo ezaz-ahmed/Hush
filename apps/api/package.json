@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "dependencies": {
+    "@anthropic-ai/sdk": "1.10.0",
     "@hush/shared": "workspace:*",
     "@nestjs/common": "12.5.1",
     "@nestjs/config": "12.1.1",
