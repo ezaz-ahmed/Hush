@@ -13,6 +13,13 @@ Format:
 - **Source:** commit sha(s) and/or PR number
 ```
 
+## 2026-11-21: Production ingest skips the hostile fixture; hash inputs pinned by a test
+
+- **Context:** A whole-repo audit found `content/fixtures/prompt-injection-weight-medication.md` was ingested in every environment, so once chat ships a real patient asking about dosing could retrieve and be shown it. It also found that the `HASH_VERSION` bump after changing chunk options or the Voyage model was enforced only by comments.
+- **Decision:** `ingest` takes `{ excludeFixtures }`; `run-ingest.ts` sets it when `NODE_ENV` is production (normalised like the seed guard). Excluded files count as gone, so a fixture row already in a production DB is deleted as `removed` through the existing path, with no new delete code. Non-production ingest is unchanged, so tests and evals still use the real retrieval attack path. A unit test snapshots `{ HASH_VERSION, DEFAULT_CHUNK_OPTIONS, DEFAULT_VOYAGE_MODEL }` and tells the reader to bump `HASH_VERSION` when it fails.
+- **Verified by:** `ingest.int.test.ts` (fixture ingested with the flag off; skipped and existing row deleted with it on; written red first), `hash-inputs.test.ts` (fails when `overlapChars` changes).
+- **Source:** PR for chore/audit-fixes
+
 ## 2026-11-20: Prompt-injection fixture lives in `content/fixtures/` and is ingested for real (#23)
 
 - **Context:** Issue #23 needs a hostile document to later prove retrieved content is treated as data, not instructions. It could be kept out of the live knowledge base or ingested like real content.
