@@ -13,6 +13,13 @@ Format:
 - **Source:** commit sha(s) and/or PR number
 ```
 
+## 2026-11-27: Answer prompt is a pinned plain file; delimiters are escaped, not nonced (#27)
+
+- **Context:** Issue #27 needs a versioned answer prompt with citation rules and delimited retrieved content. The first draft of rule 2 said to cite every statement, which conflicts with rule 1 (the fixed no-answer response when sources do not cover the question).
+- **Decision:** The prompt lives as a plain file `apps/api/prompts/answer-v1.md`, outside `src/` and ignored by Prettier so formatting cannot change it. It is read at load, and a test pins its sha256, so any wording change needs a new version (`answer-v2`) rather than an edit. `buildAnswerPrompt` escapes `& < > "` in chunk text, titles and the question instead of using per-request nonce delimiters: it is pure and deterministic, and a retrieved chunk cannot close `<source>` or forge another source id. The user approved a rule 2 wording tweak that scopes "cite every statement" to answers given from sources, removing the conflict with rule 1.
+- **Verified by:** `answer-prompt.test.ts` (hash pin, breakout payload tag counts, fixture injection stays inside `<source id="S1">`), 100% coverage of `src/prompts`, dist import prints `answer-v1`.
+- **Source:** PR for #27
+
 ## 2026-11-27: Hybrid retrieval is opt-in and gated by cosine on both lists (#26)
 
 - **Context:** Issue #26 asks for Postgres full-text search fused with vector results by RRF, plus a flag to compare the two in evals. RRF scores are not comparable to cosine, so a naive fusion could let keyword-only hits past the relevance threshold (rule 6). Evals (#70) do not exist yet.
