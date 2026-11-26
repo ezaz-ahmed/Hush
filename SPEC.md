@@ -1,164 +1,138 @@
-# Spec: LLM provider abstraction (Anthropic) with mock
+# Spec: Vector retrieval with top-k and relevance threshold
 
 ## Objective
 
-Chat answers will be streamed from an LLM. CLAUDE.md requires every LLM call to go through an `LlmProvider` interface so tests use a mock and never call a real API. This ticket adds that interface (streaming), one real implementation on Anthropic's Messages API, and a deterministic mock that records what it received. The chat endpoint, prompts, guardrails and the SSE route build on it later.
+Since #22, `pnpm ingest` fills `chunks` with Voyage embeddings, but nothing reads them. This ticket adds the read side: given a question, embed it and return the most similar chunks, each with its document's metadata, dropping anything below a minimum score. The chat endpoint (#28), the no-answer path (#30), hybrid search (#26) and the retrieval evals (#65) all build on it.
 
-**Acceptance criteria (from issue #24):**
+**Acceptance criteria (from issue #25):**
 
-- [ ] `LlmProvider` interface supporting streaming
-- [ ] Anthropic implementation
-- [ ] Mock provider for unit and integration tests
-- [ ] Model name configurable via env
+- [ ] Cosine similarity search on pgvector
+- [ ] Configurable top-k and minimum score
+- [ ] Returns chunks with document metadata
+- [ ] Integration test against Testcontainers DB
 
 **Decisions:**
 
-- **One method: `stream(request): AsyncIterable<string>`, yielding text deltas.** Chat streams over SSE, so streaming is the primary path. There is no non-streaming method: a caller that wants the whole answer joins the deltas (one line). Input is a system prompt plus `user`/`assistant` text messages, `maxTokens`, and an optional `AbortSignal`. No tool use, images, temperature, stop sequences or thinking: nothing needs them yet.
-- **`AbortSignal` is included.** It is cheap (the SDK takes a `signal`), and the later SSE route needs it to stop paying for tokens when the client disconnects (CLAUDE.md, Fastify section).
-- **Official `@anthropic-ai/sdk`, not raw `fetch`.** This differs from #21 (Voyage used plain `fetch`) on purpose. Voyage is one JSON request/response. Anthropic streaming is SSE with several event types (`message_start`, `content_block_delta`, `ping`, `message_stop`) and `error` events that can arrive mid-stream, plus retry on 429/529 with `retry-after`. Raw `fetch` would mean writing and testing an SSE parser and a second copy of the retry logic. The SDK is Anthropic's own client, published under the `@anthropic-ai` npm org, MIT licensed, released often (latest 1.12.0, published 2026-11-20). Pinned at 1.10.0: pnpm's release-age policy holds back the newer releases. It has 3 small runtime deps (`standardwebhooks`, `json-schema-to-ts`, `@opentelemetry/api`; the last is the no-op OTel API, and nothing in Hush registers an exporter). It accepts a `fetch` option, so tests inject a fake `fetch` that returns an SSE body and exercise the real SDK parsing with no network. Pin the exact version, as the other deps are. See open question 1.
-- **Default model `claude-haiku-5-5`, overridable with `ANTHROPIC_MODEL`.** The task is short answers grounded in retrieved FAQ text, where Haiku's speed and cost fit, and evals (planned) will show if a bigger model is worth it. Changing the model is an env change only. See open question 2.
-- **Both env vars are optional at boot, same as `VOYAGE_API_KEY`.** Nothing in this ticket calls the LLM at runtime, and requiring the key would break `pnpm dev`, CI and `/health` for anyone without an Anthropic account. `AnthropicLlmProvider`'s constructor throws if the key is empty, so the code that builds it enforces the key. `ANTHROPIC_MODEL` has a zod default, so it is always set.
-- **No Nest module or DI token yet.** The only consumer is tests. Nest wiring comes with the chat endpoint, as it did for embeddings.
-- **The provider sends what it is given.** Redaction (rule 1) and delimiting retrieved content (rule 7) are the caller's job, in the chat service, so there is one choke point. The interface doc comment says inputs must already be redacted. The provider never logs and never puts request or response text in errors.
+- **One plain function, `retrieve(db, embedder, query, options?)`**, in the same shape as `ingest(db, repoRoot, embedder)`. No Nest module, provider token or HTTP route: the only consumer is tests until the chat ticket (#28) wires it in, as was done for embeddings and the LLM.
+- **No migration.** `chunks.embedding vector(1024)` already has an HNSW index with `vector_cosine_ops` (`chunks_embedding_hnsw_idx`, migration 0001), which is the operator class `<=>` needs. The query orders by `embedding <=> $q`, so the planner can use that index once the table is large enough. On today's few dozen chunks it will scan the table, which is fine.
+- **Score = `1 - (embedding <=> q)`**, i.e. cosine similarity in [-1, 1]. Higher is better. Drizzle's `cosineDistance(chunks.embedding, vector)` helper builds the `<=>` expression, so no raw SQL strings are needed.
+- **Threshold in SQL, not in JS.** `where embedding <=> q <= 1 - minScore`, `order by distance, chunks.id`, `limit topK`. Because rows come back in distance order, the filter only trims the tail and never hides a result that passes. The `chunks.id` tie-break makes the order deterministic when two chunks score the same (the fake embedder makes this easy to hit).
+- **Defaults are plain constants, overridable per call:** `DEFAULT_TOP_K = 5`, `DEFAULT_MIN_SCORE = 0.3`, exported from `retrieve.ts`. No env vars. These are retrieval settings that evals will tune (CLAUDE.md, Evals). A constant changes through a reviewed commit with before/after metrics, whereas an env var could silently differ between environments and runs. Both numbers are placeholders until the eval harness (#63) and recall@k/MRR (#65) exist. Decided: 0.3 / 5 (see Decisions).
+- **Options are checked:** `topK` must be an integer from 1 to 40, `minScore` a finite number from -1 to 1. Anything else throws `RangeError` before the embedding call. The cap of 40 matches the default `hnsw.ef_search` (an index scan returns at most 40 rows) and keeps a bad caller from pulling the whole table into a prompt.
+- **The query is embedded with `inputType: 'query'`**, one `embed([query], 'query')` call. A blank (whitespace-only) query returns `[]` with no embedding call and no DB query.
+- **The result is flat, one object per chunk:** chunk `id`, `text`, `headingPath`, `score`, and the document's `documentId`, `source`, `title`, `license`, `url`. These are all the metadata `documents` has, apart from `contentHash` and `createdAt`, which are internal. `chunkId`, `documentId` and `source` are exactly the fields of the stored `Citation` type, so the chat ticket can build citations without another query.
+- **Empty means "nothing relevant".** No chunk at or above `minScore` gives `[]`. Turning that into the fixed no-answer response is #30's job, not this ticket's.
+- **Fixtures need no filter here.** In production, ingest already skips `content/fixtures/` and deletes any fixture rows (#23 and the audit fix in #113), so retrieval only sees what ingest wrote. Outside production the planted injection fixture is retrievable on purpose, so #53 can test the defence against it.
 
-**Out of scope:** the redaction module and its wiring, prompts and prompt versioning, guardrails, the chat endpoint and SSE route, Nest wiring, surfacing `stop_reason` or token usage (add when the chat ticket needs to handle truncation or record usage), a second real provider, and any live API call in tests.
+**Redaction (CLAUDE.md rule 1).** The query is user text and goes to Voyage, so it must be redacted first. The redaction module (#38) does not exist yet, and #40 ("Apply redaction before every LLM and embedding call") explicitly covers query embedding. This ticket does not build or stub redaction. `retrieve` documents the precondition in its doc comment ("`query` must already have been through PII redaction"), the same contract `EmbeddingProvider` and `LlmProvider` already state. Nothing in this ticket passes real user text: the only callers are tests with fixed strings. #40 will add the redaction step in the chat pipeline, together with the test that the embedding mock never receives raw PII. Redacting inside `retrieve` as well would put a second choke point in the code, which makes the guarantee harder to test, so it stays upstream.
+
+**Out of scope:** the chat endpoint and its Nest wiring (#28), the no-answer response (#30), hybrid search and full-text search (#26), reranking, metadata filters (by document or path), tuning `hnsw.ef_search`, an HTTP route, the redaction module and its wiring (#38, #40), and evals (#63, #65).
 
 ## Risk
 
-This is not a change to redaction, consent, audit, retention, guardrails or prompts, so it is not high-risk under CLAUDE.md. But this interface will carry user text to an external service, so the privacy contract is built in now:
+Not high-risk under CLAUDE.md: no change to redaction, consent, audit, retention, guardrails or prompts. Retrieval settings are eval-relevant, though, and the evals do not exist yet, so the default threshold cannot be measured in this ticket.
 
-- **User text reaching Anthropic without redaction (later).** Mitigation: the interface doc comment states the contract; the mock records every request so the chat ticket can write the CLAUDE.md privacy test (the provider mock never receives raw PII).
-- **Content leaking through logs or errors.** Mitigation: the provider never logs. The SDK client is built with `logLevel: 'off'` so the SDK cannot log either. Every failure is rethrown as `LlmError` whose message holds only the HTTP status or error type (`llm request failed: status 429`, `llm stream error: overloaded_error`, `llm request aborted`, `llm request failed: network error`). The SDK error is not attached as `cause` (its message can carry the response body). A test checks a marker string from the input and the API key appear nowhere in a thrown error.
-- **API key leaking.** Mitigation: the key is passed only to the SDK constructor. `validateEnv` already reports names only.
-- **Runaway cost or hanging requests.** Mitigation: `maxTokens` is required on every request, a per-request timeout (default 60 s) replaces the SDK's 10-minute default, retries stay at the SDK default (2, only before the stream starts), and abort stops the stream.
+- **Unredacted user text reaching Voyage later.** Mitigation: the precondition is in the doc comment, there is no caller with real user text yet, and #40 enforces it with a privacy test.
+- **Query text leaking into logs or errors.** Mitigation: `retrieve` never logs. It throws only its own `RangeError` messages (which name the option and its bounds, not the query) and lets `EmbeddingError` and DB errors pass through unchanged. `EmbeddingError` messages carry no input by contract (#21). The query text is never a SQL parameter, but drizzle's `DrizzleQueryError` on a DB failure includes the query params, i.e. the query embedding. Callers (#28 chat, #40 redaction) must not log raw DB errors from `retrieve`.
+- **A threshold that is wrong for the real model.** Mitigation: it is one constant, every call can override it, and #65 will measure it.
+- **Approximate results from HNSW.** At this KB size the planner scans the table, so results are exact. With the index, recall at the default `ef_search` (40) is high for `topK` up to 40, the cap. Measuring it belongs to the evals.
 
 ## Design
 
 ### Files
 
-| File                                              | What                                                         |
-| ------------------------------------------------- | ------------------------------------------------------------ |
-| `apps/api/src/llm/llm-provider.ts`                | `LlmProvider`, `LlmRequest`, `LlmMessage`, `LlmError`        |
-| `apps/api/src/llm/anthropic-llm-provider.ts`      | `AnthropicLlmProvider` on `@anthropic-ai/sdk`                |
-| `apps/api/src/llm/anthropic-llm-provider.test.ts` | Unit tests with a fake `fetch` returning SSE bodies          |
-| `apps/api/src/llm/mock-llm-provider.ts`           | `MockLlmProvider`: scripted deltas, records requests         |
-| `apps/api/src/llm/mock-llm-provider.test.ts`      | Unit tests                                                   |
-| `apps/api/src/config/env.ts` (+ `env.test.ts`)    | Optional `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL` with default |
-| `apps/api/.env.example`                           | Both vars with a comment                                     |
-| `apps/api/package.json`                           | `@anthropic-ai/sdk` (exact version)                          |
+| File                                          | What                                                           |
+| --------------------------------------------- | -------------------------------------------------------------- |
+| `apps/api/src/retrieval/retrieve.ts`          | `retrieve`, `RetrievedChunk`, `RetrieveOptions`, the defaults  |
+| `apps/api/src/retrieval/retrieve.test.ts`     | Unit tests: option checks, blank query, embed call             |
+| `apps/api/src/retrieval/retrieve.int.test.ts` | Testcontainers: ranking, threshold, top-k, metadata, tie-break |
 
-No migration.
+No migration, no env change, no new dependency, nothing in `@hush/shared` (no web consumer yet; the chat response schema will be shared in #28/#33).
 
 ### Interface
 
 ```ts
-export interface LlmMessage {
-  role: 'user' | 'assistant';
-  content: string;
+export const DEFAULT_TOP_K = 5;
+export const DEFAULT_MIN_SCORE = 0.3; // placeholder until retrieval evals (#65)
+
+export interface RetrieveOptions {
+  topK?: number; // integer 1..40, default DEFAULT_TOP_K
+  minScore?: number; // -1..1, default DEFAULT_MIN_SCORE
 }
 
-export interface LlmRequest {
-  system: string;
-  messages: LlmMessage[]; // non-empty, first is 'user' (the API rejects anything else with a 400)
-  maxTokens: number;
-  signal?: AbortSignal; // abort when the client disconnects
+export interface RetrievedChunk {
+  chunkId: string;
+  text: string;
+  headingPath: string[];
+  score: number; // cosine similarity, 1 - (embedding <=> query)
+  documentId: string;
+  source: string;
+  title: string;
+  license: string;
+  url: string | null;
 }
 
 /**
- * Streams a model reply as text deltas. Inputs go to an external service: user text must already
- * have been through PII redaction (CLAUDE.md rule 1). Implementations never log inputs or outputs
- * and never put them in errors.
+ * Returns up to topK chunks with score >= minScore, best first (ties by chunk id).
+ * `query` is sent to the embedding provider: it must already have been through PII
+ * redaction (CLAUDE.md rule 1; enforced by the chat pipeline, #40). Never logs.
  */
-export interface LlmProvider {
-  readonly model: string; // so callers can record which model answered
-  stream(request: LlmRequest): AsyncIterable<string>;
-}
-
-/** Message has a status or error type only: never prompt text, response text or API key. */
-export class LlmError extends Error {
-  override name = 'LlmError';
-}
+export async function retrieve(
+  db: Db,
+  embedder: EmbeddingProvider,
+  query: string,
+  options?: RetrieveOptions,
+): Promise<RetrievedChunk[]>;
 ```
 
-### Anthropic provider
+### Query
 
 ```ts
-export interface AnthropicOptions {
-  apiKey: string;
-  model: string; // callers pass env.ANTHROPIC_MODEL
-  timeoutMs?: number; // per request, default 60000
-  maxRetries?: number; // default 2 (SDK default); tests pass 0
-  fetch?: typeof fetch; // test seam, passed to the SDK client
-}
+const distance = cosineDistance(chunks.embedding, vector);
+db.select({ /* chunk + document columns */, score: sql<number>`1 - (${distance})` })
+  .from(chunks)
+  .innerJoin(documents, eq(chunks.documentId, documents.id))
+  .where(lte(distance, 1 - minScore))
+  .orderBy(distance, chunks.id)
+  .limit(topK);
 ```
 
-- Constructor throws `LlmError` if `apiKey` or `model` is empty, or `timeoutMs` is not a finite number > 0. Builds `new Anthropic({ apiKey, timeout, maxRetries, fetch, logLevel: 'off' })`.
-- `stream` is an `async *` generator: calls `client.messages.create({ model, system, messages, max_tokens, stream: true }, { signal })`, iterates the events and yields `delta.text` for each `content_block_delta` whose delta is `text_delta`. Other events are ignored.
-- Every thrown error is mapped to `LlmError` with no `cause`: `APIUserAbortError` gives `llm request aborted`; `APIError` with a status gives `llm request failed: status N`; an SSE `error` event mid-stream gives `llm stream error: <error.type>` (type only, e.g. `overloaded_error`); a connection error or timeout gives `llm request failed: network error` / `timeout`; anything else gives `llm request failed`.
-
-### Mock provider
-
-```ts
-type Responder = (request: LlmRequest) => string[] | Error;
-
-export class MockLlmProvider implements LlmProvider {
-  readonly model = 'mock';
-  readonly calls: Omit<LlmRequest, 'signal'>[] = [];
-  constructor(respond: string[] | Responder = ['Mock answer.']);
-}
-```
-
-- Records a deep copy of each request (minus `signal`) before yielding anything, so privacy tests can assert on exactly what would have been sent.
-- Yields the scripted deltas in order. A responder can return an `Error`, which is thrown after recording (for error-path tests in the chat ticket).
-- If `signal` is aborted before or between deltas, it stops and throws `LlmError('llm request aborted')`, the same as the real provider.
-- No timers, no randomness, no I/O.
-
-### Env
-
-```ts
-// Optional: only chat needs it; health, dev and tests run without it.
-ANTHROPIC_API_KEY: z.string().min(1).optional(),
-ANTHROPIC_MODEL: z.string().min(1).default('claude-haiku-5-5'),
-```
-
-`blankIsUnset` is extended to both names, so `ANTHROPIC_API_KEY=` reads as unset and `ANTHROPIC_MODEL=` falls back to the default. `.env.example` gets:
-
-```
-# Anthropic (https://www.anthropic.com). Optional for the API to start; required for chat answers.
-ANTHROPIC_API_KEY=
-# Model for chat answers. Optional, default claude-haiku-5-5.
-ANTHROPIC_MODEL=claude-haiku-5-5
-```
+`node-postgres` parses `double precision` as a JS number; the integration test checks `typeof score === 'number'` so a driver change can't slip a string through.
 
 ## Testing strategy
 
-Unit tests only, no network. The Anthropic tests pass a fake `fetch` that returns a `text/event-stream` `Response` built from a list of SSE events, and `maxRetries: 0` unless a test is about retries. No DB, so no integration test.
+All tests use `FakeEmbeddingProvider`: bag-of-words, normalised, deterministic, no network. Its cosine is meaningful (shared words give higher scores), so ranking tests can use plain sentences. Two things about it shape the tests: every vector has a bias in slot 0 and no negative values, so any two texts score above 0, and an unrelated chunk still scores something. Tests therefore set `minScore` explicitly, and they compute expected scores in JS from the fake's own vectors (dot product of two unit vectors) instead of hard-coding numbers.
 
-- **Request:** URL `https://api.anthropic.com/v1/messages`, `POST`, `Authorization: Bearer <key>` header (SDK 1.10.0 sends the API key this way, not as `x-api-key`), and body `{ model, system, messages, max_tokens, stream: true }` exactly. The model comes from options.
-- **Streaming:** `message_start`, `ping`, `content_block_start`, three `text_delta`s, `content_block_stop`, `message_delta`, `message_stop` yields exactly the three deltas, in order. A stream with no text yields nothing and completes.
-- **Errors:** 401 throws `llm request failed: status 401` after one call. With `maxRetries: 1`, a 429 then a 200 succeeds after two calls (proves SDK retry is on). A mid-stream SSE `error` event (`overloaded_error`) after one delta yields that delta, then throws `llm stream error: overloaded_error`. A rejected `fetch` throws `llm request failed: network error`.
-- **Abort:** aborting the signal after the first delta ends the iteration with `llm request aborted`. An already-aborted signal throws without yielding.
-- **No leakage:** with input and system containing `'PII-MARKER jane@example.com'`, key `'sk-SECRET'`, and error bodies that echo the marker, every thrown error's `message`, `stack` and `cause` (via `util.inspect`) contain neither. No `console.*` calls during any test (spy).
-- **Options:** empty `apiKey`, empty `model`, `timeoutMs: 0` throw on construction.
-- **Mock:** default reply; scripted array; responder sees the request; `calls` records a copy (mutating the original request afterwards does not change it) and excludes `signal`; a responder `Error` is thrown after recording; abort stops between deltas. Two runs with the same input give the same output.
-- **Env:** `ANTHROPIC_API_KEY` optional and blank reads as unset; `ANTHROPIC_MODEL` defaults to `claude-haiku-5-5`, blank gives the default, a set value passes through. Existing `toStrictEqual` expectations in `env.test.ts` gain `ANTHROPIC_MODEL`.
+**Integration (`retrieve.int.test.ts`, Testcontainers via `startTestDb()`):** one container for the file, `delete from documents` in `beforeEach` (cascades to chunks). Rows are inserted directly with Drizzle (two or three documents, a handful of chunks, embeddings from the fake), not through `ingest`, so each test controls its chunks exactly.
 
-Manual check (optional, not in CI): one `stream` call with a real key and a short prompt prints deltas. This is the only check of the live API and the default model name, so run it once before the chat ticket.
+- **Ranking (issue criterion 1):** chunks about "hair loss treatment", "weight loss medication" and "clinic opening hours"; the query "hair loss" returns the hair chunk first, and the order matches descending JS-computed cosine. Each `score` is a number within 1e-6 of the JS value.
+- **Top-k (criterion 2):** with 4 matching chunks, `topK: 2` returns the best 2. The default returns at most `DEFAULT_TOP_K`.
+- **Min score (criterion 2):** with `minScore` set between two chunks' scores, only the chunks at or above it come back. A `minScore` above every score returns `[]`. A chunk scoring exactly the threshold is included (`<=` on distance), using an identical text (score 1, `minScore: 1`).
+- **Metadata (criterion 3):** each result carries the right `chunkId`, `text`, `headingPath`, `documentId`, `source`, `title`, `license` and `url` (one document with a `url`, one with `null`). Chunks from two documents both come back, each joined to its own document.
+- **Tie-break:** two chunks with identical text (same vector) come back ordered by chunk id, on repeated calls.
+- **Empty table** returns `[]`.
+- **Embed call:** a valid call makes exactly one `embed` call, with `([query], 'query')` (`FakeEmbeddingProvider.calls`).
+
+**Unit (`retrieve.test.ts`, no DB; `db` is a stub that fails the test if touched):**
+
+- `topK` of 0, 51, 2.5 or `NaN`, and `minScore` of -1.1, 1.1 or `NaN`, throw `RangeError` before any `embed` call.
+- A blank or whitespace-only query returns `[]` and makes no `embed` call.
+- An `EmbeddingError` from the provider propagates unchanged, and the DB stub is not touched.
+- The `RangeError` messages do not contain the query text.
 
 ## Boundaries
 
-- Always: route LLM calls through `LlmProvider`, keep request and response text out of logs and errors, use the mock in every automated test, use `.js` import extensions, put tests next to source.
-- Ask first: any SDK feature beyond streamed text (tools, thinking, batches), changing the default model, making `ANTHROPIC_API_KEY` required, adding a second real provider.
-- Never: call the real Anthropic API from tests, log or throw prompt or response text, or send unredacted user text to `stream` (enforced by the chat service later).
+- Always: embed through `EmbeddingProvider` with `'query'`, use `FakeEmbeddingProvider` in every automated test, keep the query out of logs and errors, use `.js` import extensions, put tests next to source.
+- Ask first: changing the default `topK` or `minScore` (needs eval numbers once #65 exists), adding a migration or index setting, moving the settings to env vars, adding filters, reranking or hybrid search.
+- Never: call a real embedding API from tests, touch the Neon database from tests, log or throw query text, or call `retrieve` with user text that has not been redacted.
 
 ## Success criteria
 
-- `pnpm lint && pnpm typecheck && pnpm test` pass.
-- `LlmProvider`, `LlmRequest`, `LlmMessage`, `LlmError`, `AnthropicLlmProvider` and `MockLlmProvider` are exported from `apps/api/src/llm/`, and every behaviour in the testing strategy has a test.
-- `ANTHROPIC_API_KEY` (optional) and `ANTHROPIC_MODEL` (default `claude-haiku-5-5`) are zod-validated and documented in `apps/api/.env.example`. The API starts and `/health` works without them.
-- One new dependency, `@anthropic-ai/sdk`, pinned exactly. No migration, no DB writes.
+- `pnpm lint && pnpm typecheck && pnpm test` pass, and `pnpm test:int` passes (needs Docker).
+- `retrieve`, `RetrievedChunk`, `RetrieveOptions`, `DEFAULT_TOP_K` and `DEFAULT_MIN_SCORE` are exported from `apps/api/src/retrieval/retrieve.ts`, and every behaviour in the testing strategy has a test.
+- Results are ordered by cosine similarity, capped at `topK`, filtered at `minScore`, and each carries its document's `source`, `title`, `license` and `url`.
+- No migration, no env change, no new dependency.
 
-## Open questions
+## Decisions
 
-1. **SDK or raw `fetch`?** Recommended: the SDK (reasons above). Raw `fetch` avoids the dependency but adds an SSE parser and duplicate retry logic that we would own and test. Approving this spec approves the new dependency.
-2. **Default model?** Recommended: `claude-haiku-5-5` for cost and latency, with evals deciding later. `claude-sonnet-5-5` is the alternative if you want answer quality first. Either is an env change.
+1. **Default `minScore` = 0.3, `topK` = 5** (PM decision, 2026-11-27). Placeholders until retrieval evals (#65); each call can override them, and changing the defaults needs eval numbers.

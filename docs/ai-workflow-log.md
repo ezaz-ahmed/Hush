@@ -13,6 +13,13 @@ Format:
 - **Source:** commit sha(s) and/or PR number
 ```
 
+## 2026-11-27: Retrieval defaults and a topK cap of 40 (#25)
+
+- **Context:** Issue #25 asks for configurable top-k and minimum score but gives no values, and there are no retrieval evals yet. The first draft allowed topK up to 50.
+- **Decision:** `retrieve()` is a plain function with code constants `DEFAULT_TOP_K = 5` and `DEFAULT_MIN_SCORE = 0.3` (placeholders until #65 measures them; not env vars, so changes go through a reviewed commit with eval numbers). Review measured that an HNSW index scan with pgvector's default `hnsw.ef_search = 40` returns at most 40 rows, so `MAX_TOP_K` is 40, not 50. No migration: the HNSW cosine index from 0001 is still used with the threshold `WHERE` (checked with EXPLAIN on 20k rows). The query must already be redacted (rule 1, enforced by #40), and callers must not log raw DB errors from it, because `DrizzleQueryError` includes the query embedding in its params. A ship-gate test review found the tie-break test passed about 1 run in 6 even with the tie-break removed (random uuids), so it now inserts fixed ids in reverse order.
+- **Verified by:** `retrieve.test.ts`, `retrieve.int.test.ts` (Testcontainers; the tie-break test fails with `chunks.id` removed from `orderBy`); review plus code, security and test-engineer agents.
+- **Source:** PR for #25
+
 ## 2026-11-21: Production ingest skips the hostile fixture; hash inputs pinned by a test
 
 - **Context:** A whole-repo audit found `content/fixtures/prompt-injection-weight-medication.md` was ingested in every environment, so once chat ships a real patient asking about dosing could retrieve and be shown it. It also found that the `HASH_VERSION` bump after changing chunk options or the Voyage model was enforced only by comments.
