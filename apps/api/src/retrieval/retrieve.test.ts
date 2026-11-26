@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Db } from '../database/database.module.js';
 import { EmbeddingError, type EmbeddingProvider } from '../embedding/embedding-provider.js';
 import { FakeEmbeddingProvider } from '../embedding/fake-embedding-provider.js';
-import { MAX_TOP_K, retrieve } from './retrieve.js';
+import { DEFAULT_MODE, HYBRID_CANDIDATES, MAX_TOP_K, retrieve } from './retrieve.js';
 
 // Any property access fails the test: proves retrieve did not touch the database.
 const untouchedDb = new Proxy(
@@ -38,6 +38,23 @@ describe('retrieve guards', () => {
       expect(embedder.calls).toHaveLength(0);
     },
   );
+
+  it.each([{ mode: 'bm25' }, { mode: '' }, { mode: 'Hybrid' }])(
+    'rejects %o with RangeError before embedding',
+    async (options) => {
+      const embedder = new FakeEmbeddingProvider();
+      // @ts-expect-error mode is deliberately invalid: the eval CLI passes plain strings
+      const promise = retrieve(untouchedDb, embedder, QUERY, options);
+      await expect(promise).rejects.toBeInstanceOf(RangeError);
+      await expect(promise).rejects.not.toThrow(QUERY);
+      expect(embedder.calls).toHaveLength(0);
+    },
+  );
+
+  it('defaults to vector mode, with hybrid opt-in and a 40-candidate pool', () => {
+    expect(DEFAULT_MODE).toBe('vector');
+    expect(HYBRID_CANDIDATES).toBe(MAX_TOP_K);
+  });
 
   it.each(['', '   ', '\n\t '])('returns [] for blank query %j without embedding', async (q) => {
     const embedder = new FakeEmbeddingProvider();

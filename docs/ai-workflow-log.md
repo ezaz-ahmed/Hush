@@ -13,6 +13,13 @@ Format:
 - **Source:** commit sha(s) and/or PR number
 ```
 
+## 2026-11-27: Hybrid retrieval is opt-in and gated by cosine on both lists (#26)
+
+- **Context:** Issue #26 asks for Postgres full-text search fused with vector results by RRF, plus a flag to compare the two in evals. RRF scores are not comparable to cosine, so a naive fusion could let keyword-only hits past the relevance threshold (rule 6). Evals (#70) do not exist yet.
+- **Decision:** `retrieve()` takes `mode: 'vector' | 'hybrid'`, default `DEFAULT_MODE = 'vector'` (a constant, not an env var, as in #25) until #70 measures hybrid. Both candidate lists (40 each) are filtered by cosine >= `minScore` before fusion, so hybrid returns `[]` exactly when vector mode does, and `score` stays cosine (results are RRF-ordered: take the max score). FTS uses `plainto_tsquery` with `' & '` replaced by `' | '` so any query word can match; operators in user text are ignored. Security review found an over-long query makes Postgres echo the query text in the error message and costs superlinear CPU: #40 must cap query length at the API boundary and never log raw DB errors.
+- **Verified by:** `rrf.test.ts`, `retrieve.test.ts`, `retrieve.int.test.ts` (Testcontainers); mutation testing killed all five mutations (AND semantics, no fusion, no cosine gate on FTS, no FTS id tie-break, hybrid treated as vector); review plus code, security and test-engineer agents.
+- **Source:** PR for #26
+
 ## 2026-11-27: Retrieval defaults and a topK cap of 40 (#25)
 
 - **Context:** Issue #25 asks for configurable top-k and minimum score but gives no values, and there are no retrieval evals yet. The first draft allowed topK up to 50.
