@@ -1,138 +1,141 @@
-# Spec: Vector retrieval with top-k and relevance threshold
+# Spec: Hybrid search: full-text + vector with reciprocal rank fusion
 
 ## Objective
 
-Since #22, `pnpm ingest` fills `chunks` with Voyage embeddings, but nothing reads them. This ticket adds the read side: given a question, embed it and return the most similar chunks, each with its document's metadata, dropping anything below a minimum score. The chat endpoint (#28), the no-answer path (#30), hybrid search (#26) and the retrieval evals (#65) all build on it.
+`retrieve()` (#25) ranks chunks by cosine similarity alone. Embeddings are weak on exact terms: drug names, product names and short keyword questions ("finasteride side effects") can rank below chunks that are only loosely related. This ticket adds Postgres full-text search over `chunks` and merges it with the vector ranking using reciprocal rank fusion (RRF), behind a per-call switch, so the evals can compare the two modes (#65, #70) before hybrid becomes the default.
 
-**Acceptance criteria (from issue #25):**
+**Acceptance criteria (from issue #26):**
 
-- [ ] Cosine similarity search on pgvector
-- [ ] Configurable top-k and minimum score
-- [ ] Returns chunks with document metadata
-- [ ] Integration test against Testcontainers DB
+- [ ] Postgres full-text search on chunks
+- [ ] Merge with vector results using RRF
+- [ ] Feature flag to compare vector-only vs hybrid in evals
 
 **Decisions:**
 
-- **One plain function, `retrieve(db, embedder, query, options?)`**, in the same shape as `ingest(db, repoRoot, embedder)`. No Nest module, provider token or HTTP route: the only consumer is tests until the chat ticket (#28) wires it in, as was done for embeddings and the LLM.
-- **No migration.** `chunks.embedding vector(1024)` already has an HNSW index with `vector_cosine_ops` (`chunks_embedding_hnsw_idx`, migration 0001), which is the operator class `<=>` needs. The query orders by `embedding <=> $q`, so the planner can use that index once the table is large enough. On today's few dozen chunks it will scan the table, which is fine.
-- **Score = `1 - (embedding <=> q)`**, i.e. cosine similarity in [-1, 1]. Higher is better. Drizzle's `cosineDistance(chunks.embedding, vector)` helper builds the `<=>` expression, so no raw SQL strings are needed.
-- **Threshold in SQL, not in JS.** `where embedding <=> q <= 1 - minScore`, `order by distance, chunks.id`, `limit topK`. Because rows come back in distance order, the filter only trims the tail and never hides a result that passes. The `chunks.id` tie-break makes the order deterministic when two chunks score the same (the fake embedder makes this easy to hit).
-- **Defaults are plain constants, overridable per call:** `DEFAULT_TOP_K = 5`, `DEFAULT_MIN_SCORE = 0.3`, exported from `retrieve.ts`. No env vars. These are retrieval settings that evals will tune (CLAUDE.md, Evals). A constant changes through a reviewed commit with before/after metrics, whereas an env var could silently differ between environments and runs. Both numbers are placeholders until the eval harness (#63) and recall@k/MRR (#65) exist. Decided: 0.3 / 5 (see Decisions).
-- **Options are checked:** `topK` must be an integer from 1 to 40, `minScore` a finite number from -1 to 1. Anything else throws `RangeError` before the embedding call. The cap of 40 matches the default `hnsw.ef_search` (an index scan returns at most 40 rows) and keeps a bad caller from pulling the whole table into a prompt.
-- **The query is embedded with `inputType: 'query'`**, one `embed([query], 'query')` call. A blank (whitespace-only) query returns `[]` with no embedding call and no DB query.
-- **The result is flat, one object per chunk:** chunk `id`, `text`, `headingPath`, `score`, and the document's `documentId`, `source`, `title`, `license`, `url`. These are all the metadata `documents` has, apart from `contentHash` and `createdAt`, which are internal. `chunkId`, `documentId` and `source` are exactly the fields of the stored `Citation` type, so the chat ticket can build citations without another query.
-- **Empty means "nothing relevant".** No chunk at or above `minScore` gives `[]`. Turning that into the fixed no-answer response is #30's job, not this ticket's.
-- **Fixtures need no filter here.** In production, ingest already skips `content/fixtures/` and deletes any fixture rows (#23 and the audit fix in #113), so retrieval only sees what ingest wrote. Outside production the planted injection fixture is retrievable on purpose, so #53 can test the defence against it.
+- **The flag is a retrieval option, `mode: 'vector' | 'hybrid'`**, on the existing `retrieve(db, embedder, query, options?)`. Default `DEFAULT_MODE = 'vector'`, a constant exported from `retrieve.ts`, overridable per call. The eval harness (#63) passes `mode` per run, so one run can score both modes side by side. **No env var**, for the reason #25 gave for `topK`/`minScore`: retrieval settings change through a reviewed commit with before/after eval numbers, and an env var could silently differ between environments and eval runs. The chat endpoint (#28) will call `retrieve` with the default.
+- **Default stays `'vector'`.** Switching the default changes retrieval behaviour, and CLAUDE.md requires eval numbers for that; the evals don't exist yet. #70 ("Retrieval experiments: chunking and hybrid search") is where the default gets decided with recall@k/MRR. With the default unchanged, existing callers and tests see no behaviour change.
+- **No migration.** `chunks.tsv` is already a stored generated column, `to_tsvector('english', text)`, with a GIN index `chunks_tsv_gin_idx` (migration 0001). The app never writes it; ingest keeps it in sync for free.
+- **FTS query: the query's lexemes OR-ed together, built by Postgres from the raw text.** `replace(plainto_tsquery('english', $q)::text, ' & ', ' | ')::tsquery`. Why:
+  - `plainto_tsquery` parses arbitrary text without operator syntax, so quotes, `&`, `|`, `!`, `:*`, `<->` and parentheses in user text can never cause a syntax error or change the query's meaning. `to_tsquery` would throw on them; `websearch_to_tsquery` gives `-word` and `or` special meaning, which a patient never intends.
+  - `plainto_tsquery` alone ANDs every lexeme, so a natural question ("how long does finasteride take to work") would only match a chunk containing all of `long`, `finasterid`, `take` and `work`, i.e. almost nothing. OR over lexemes is the usual keyword-retrieval behaviour; ranking then rewards chunks matching more of them.
+  - Lexemes in the `plainto_tsquery` output are quoted, so replacing the `' & '` separators cannot touch lexeme text. On pg17 a hyphenated word comes back as `'hair-loss' & 'hair' & 'loss'`, which the replace turns into ORs, so it stays valid.
+  - The text is a bound parameter, never interpolated. A stopword-only query gives an empty tsquery, which matches nothing (Postgres emits a NOTICE, not an error).
+- **FTS ranking: `ts_rank(tsv, tsq)` descending, then `chunks.id`.** Only rows with `tsv @@ tsq`.
+- **The relevance threshold gates both lists on cosine.** Both candidate queries keep `embedding <=> q <= 1 - minScore`, so every chunk hybrid returns has cosine `>= minScore`, exactly as in vector mode. A keyword-only hit with poor cosine is dropped. Consequences:
+  - Hybrid only re-ranks chunks that already pass the threshold; it can pull one in from below the vector top-k, but never from below `minScore`. Grounding (CLAUDE.md rule 6) is not weakened.
+  - Hybrid returns `[]` exactly when vector mode returns `[]`, so the no-answer path (#30) behaves the same in both modes.
+  - The FTS list costs no extra embedding: the cosine filter reuses the one query vector.
+- **`score` keeps its meaning in both modes: cosine similarity**, `1 - (embedding <=> q)`. It is the only score comparable to `minScore` and the one #30 will threshold on. RRF scores are not returned (they are only meaningful as an ordering). In hybrid mode the result is ordered by RRF, so it is **not** necessarily sorted by `score`; callers that need the best cosine take the max, not the first element. The doc comment says so.
+- **RRF:** `rrf(chunk) = Σ 1 / (k + rank)` over the lists the chunk appears in, ranks 1-based, `RRF_K = 60` (the value from Cormack et al. 2009 and the common default; it damps the gap between top ranks so neither list dominates). Sorted by RRF descending, ties by chunk id ascending (same deterministic rule as vector mode), then cut to `topK`. Fusion is a pure function in its own module.
+- **Candidate pool: `HYBRID_CANDIDATES = MAX_TOP_K` (40) per list.** 40 is the most an HNSW index scan returns at the default `ef_search` (the reason `MAX_TOP_K` is 40), it is above any `topK` we allow, and it is small enough to fuse in JS. Pool size is a constant, not an option.
+- **Two queries, fused in JS.** Hybrid runs the vector query (as today, with `limit HYBRID_CANDIDATES`) and the FTS query (same select and join, `where tsv @@ tsq and distance <= 1 - minScore`, `order by ts_rank desc, id`, `limit HYBRID_CANDIDATES`), then fuses the id lists and returns the rows from the merged map. One CTE query would be shorter on the wire but harder to read and to test; the pure fusion function is what the unit tests pin.
+- **Vector mode is unchanged**: same SQL, same order, same results. Existing tests stay as they are.
+- **`mode` is checked** like the other options: anything other than `'vector'` or `'hybrid'` throws `RangeError` before the embedding call (the eval CLI will pass strings). The message names the option and the allowed values, not the query.
 
-**Redaction (CLAUDE.md rule 1).** The query is user text and goes to Voyage, so it must be redacted first. The redaction module (#38) does not exist yet, and #40 ("Apply redaction before every LLM and embedding call") explicitly covers query embedding. This ticket does not build or stub redaction. `retrieve` documents the precondition in its doc comment ("`query` must already have been through PII redaction"), the same contract `EmbeddingProvider` and `LlmProvider` already state. Nothing in this ticket passes real user text: the only callers are tests with fixed strings. #40 will add the redaction step in the chat pipeline, together with the test that the embedding mock never receives raw PII. Redacting inside `retrieve` as well would put a second choke point in the code, which makes the guarantee harder to test, so it stays upstream.
+**Redaction (CLAUDE.md rule 1).** No new external call. Both modes make exactly one `embed([query], 'query')` call; full-text search runs inside Postgres. The `retrieve` precondition from #25 still applies: `query` must already be redacted (#40 enforces it in the chat pipeline). One change to note: in hybrid mode the query **text** becomes a SQL parameter (for `plainto_tsquery`), so drizzle's `DrizzleQueryError` on a DB failure now carries the query text, not just its embedding. The existing contract already says callers must not log raw DB errors from `retrieve`; the doc comment is updated to name the query text explicitly.
 
-**Out of scope:** the chat endpoint and its Nest wiring (#28), the no-answer response (#30), hybrid search and full-text search (#26), reranking, metadata filters (by document or path), tuning `hnsw.ef_search`, an HTTP route, the redaction module and its wiring (#38, #40), and evals (#63, #65).
+**Out of scope:** changing the default mode (#70), env vars for retrieval, exposing RRF scores, weighting the two lists, BM25 or other ranking extensions, reranking, tuning `RRF_K` or the pool size, a migration or a different text-search config, the chat endpoint (#28), the no-answer response (#30), the eval harness and metrics (#63, #65), redaction (#38, #40).
 
 ## Risk
 
-Not high-risk under CLAUDE.md: no change to redaction, consent, audit, retention, guardrails or prompts. Retrieval settings are eval-relevant, though, and the evals do not exist yet, so the default threshold cannot be measured in this ticket.
+Not high-risk under CLAUDE.md: no change to redaction, consent, audit, retention, guardrails or prompts. It is a retrieval change, which CLAUDE.md says needs before/after eval numbers; the evals don't exist yet, which is why the default stays `'vector'` and hybrid is opt-in until #70.
 
-- **Unredacted user text reaching Voyage later.** Mitigation: the precondition is in the doc comment, there is no caller with real user text yet, and #40 enforces it with a privacy test.
-- **Query text leaking into logs or errors.** Mitigation: `retrieve` never logs. It throws only its own `RangeError` messages (which name the option and its bounds, not the query) and lets `EmbeddingError` and DB errors pass through unchanged. `EmbeddingError` messages carry no input by contract (#21). The query text is never a SQL parameter, but drizzle's `DrizzleQueryError` on a DB failure includes the query params, i.e. the query embedding. Callers (#28 chat, #40 redaction) must not log raw DB errors from `retrieve`.
-- **A threshold that is wrong for the real model.** Mitigation: it is one constant, every call can override it, and #65 will measure it.
-- **Approximate results from HNSW.** At this KB size the planner scans the table, so results are exact. With the index, recall at the default `ef_search` (40) is high for `topK` up to 40, the cap. Measuring it belongs to the evals.
+- **Hybrid weakening grounding.** Mitigation: both lists are gated on the same cosine threshold; an int test proves a keyword-only match below `minScore` is not returned and that hybrid returns `[]` whenever vector mode does.
+- **User text breaking the FTS query.** Mitigation: `plainto_tsquery` takes no operator syntax and the text is a bound parameter; an int test runs operator- and quote-laden queries.
+- **Query text in DB errors.** See Redaction; contract restated in the doc comment, no logging in `retrieve`.
+- **English stemming on non-English or clinic-specific terms.** `to_tsvector('english', ...)` may stem drug names oddly; both sides use the same config, so matching stays consistent. Measuring the effect belongs to #70.
 
 ## Design
 
 ### Files
 
-| File                                          | What                                                           |
-| --------------------------------------------- | -------------------------------------------------------------- |
-| `apps/api/src/retrieval/retrieve.ts`          | `retrieve`, `RetrievedChunk`, `RetrieveOptions`, the defaults  |
-| `apps/api/src/retrieval/retrieve.test.ts`     | Unit tests: option checks, blank query, embed call             |
-| `apps/api/src/retrieval/retrieve.int.test.ts` | Testcontainers: ranking, threshold, top-k, metadata, tie-break |
+| File                                          | What                                                                           |
+| --------------------------------------------- | ------------------------------------------------------------------------------ |
+| `apps/api/src/retrieval/rrf.ts`               | `fuseRrf`, `RRF_K`                                                             |
+| `apps/api/src/retrieval/rrf.test.ts`          | Unit tests for fusion                                                          |
+| `apps/api/src/retrieval/retrieve.ts`          | `mode` option, `DEFAULT_MODE`, `HYBRID_CANDIDATES`, the FTS query, hybrid path |
+| `apps/api/src/retrieval/retrieve.test.ts`     | Unit: `mode` validation                                                        |
+| `apps/api/src/retrieval/retrieve.int.test.ts` | Testcontainers: FTS and hybrid behaviour                                       |
 
-No migration, no env change, no new dependency, nothing in `@hush/shared` (no web consumer yet; the chat response schema will be shared in #28/#33).
+No migration, no env change, no new dependency, nothing in `@hush/shared`.
 
 ### Interface
 
 ```ts
-export const DEFAULT_TOP_K = 5;
-export const DEFAULT_MIN_SCORE = 0.3; // placeholder until retrieval evals (#65)
-
-export interface RetrieveOptions {
-  topK?: number; // integer 1..40, default DEFAULT_TOP_K
-  minScore?: number; // -1..1, default DEFAULT_MIN_SCORE
-}
-
-export interface RetrievedChunk {
-  chunkId: string;
-  text: string;
-  headingPath: string[];
-  score: number; // cosine similarity, 1 - (embedding <=> query)
-  documentId: string;
-  source: string;
-  title: string;
-  license: string;
-  url: string | null;
-}
+// rrf.ts
+export const RRF_K = 60;
 
 /**
- * Returns up to topK chunks with score >= minScore, best first (ties by chunk id).
- * `query` is sent to the embedding provider: it must already have been through PII
- * redaction (CLAUDE.md rule 1; enforced by the chat pipeline, #40). Never logs.
+ * Reciprocal rank fusion. Each list is ids best-first (1-based rank). Returns every id once,
+ * best first, ties by id ascending. An id missing from a list contributes 0 for it.
  */
-export async function retrieve(
-  db: Db,
-  embedder: EmbeddingProvider,
-  query: string,
-  options?: RetrieveOptions,
-): Promise<RetrievedChunk[]>;
+export function fuseRrf(lists: string[][], k?: number): { id: string; score: number }[];
+
+// retrieve.ts (additions)
+export type RetrievalMode = 'vector' | 'hybrid';
+export const DEFAULT_MODE: RetrievalMode = 'vector'; // hybrid opt-in until #70 has eval numbers
+export const HYBRID_CANDIDATES = MAX_TOP_K; // per list, before fusion
+
+export interface RetrieveOptions {
+  topK?: number;
+  minScore?: number;
+  mode?: RetrievalMode; // default DEFAULT_MODE
+}
 ```
 
-### Query
+`RetrievedChunk` is unchanged; `score` is cosine similarity in both modes.
+
+### FTS query (hybrid only)
 
 ```ts
-const distance = cosineDistance(chunks.embedding, vector);
-db.select({ /* chunk + document columns */, score: sql<number>`1 - (${distance})` })
+const tsq = sql`replace(plainto_tsquery('english', ${query})::text, ' & ', ' | ')::tsquery`;
+db.select({/* same columns as the vector query */})
   .from(chunks)
   .innerJoin(documents, eq(chunks.documentId, documents.id))
-  .where(lte(distance, 1 - minScore))
-  .orderBy(distance, chunks.id)
-  .limit(topK);
+  .where(and(sql`${chunks.tsv} @@ ${tsq}`, lte(distance, 1 - minScore)))
+  .orderBy(desc(sql`ts_rank(${chunks.tsv}, ${tsq})`), chunks.id)
+  .limit(HYBRID_CANDIDATES);
 ```
-
-`node-postgres` parses `double precision` as a JS number; the integration test checks `typeof score === 'number'` so a driver change can't slip a string through.
 
 ## Testing strategy
 
-All tests use `FakeEmbeddingProvider`: bag-of-words, normalised, deterministic, no network. Its cosine is meaningful (shared words give higher scores), so ranking tests can use plain sentences. Two things about it shape the tests: every vector has a bias in slot 0 and no negative values, so any two texts score above 0, and an unrelated chunk still scores something. Tests therefore set `minScore` explicitly, and they compute expected scores in JS from the fake's own vectors (dot product of two unit vectors) instead of hard-coding numbers.
+All tests use `FakeEmbeddingProvider` (deterministic, no network). The fake treats words literally, while Postgres `english` FTS stems them (`treatments` and `treatment` share the lexeme `treatment`). That difference is how int tests build a case where the two lists disagree, without hand-crafted vectors. As in #25, tests set `minScore` explicitly and compute expected cosine in JS from the fake's vectors.
 
-**Integration (`retrieve.int.test.ts`, Testcontainers via `startTestDb()`):** one container for the file, `delete from documents` in `beforeEach` (cascades to chunks). Rows are inserted directly with Drizzle (two or three documents, a handful of chunks, embeddings from the fake), not through `ingest`, so each test controls its chunks exactly.
+**Unit (`rrf.test.ts`):**
 
-- **Ranking (issue criterion 1):** chunks about "hair loss treatment", "weight loss medication" and "clinic opening hours"; the query "hair loss" returns the hair chunk first, and the order matches descending JS-computed cosine. Each `score` is a number within 1e-6 of the JS value.
-- **Top-k (criterion 2):** with 4 matching chunks, `topK: 2` returns the best 2. The default returns at most `DEFAULT_TOP_K`.
-- **Min score (criterion 2):** with `minScore` set between two chunks' scores, only the chunks at or above it come back. A `minScore` above every score returns `[]`. A chunk scoring exactly the threshold is included (`<=` on distance), using an identical text (score 1, `minScore: 1`).
-- **Metadata (criterion 3):** each result carries the right `chunkId`, `text`, `headingPath`, `documentId`, `source`, `title`, `license` and `url` (one document with a `url`, one with `null`). Chunks from two documents both come back, each joined to its own document.
-- **Tie-break:** two chunks with identical text (same vector) come back ordered by chunk id, on repeated calls.
-- **Empty table** returns `[]`.
-- **Embed call:** a valid call makes exactly one `embed` call, with `([query], 'query')` (`FakeEmbeddingProvider.calls`).
+- A single list keeps its order; scores are exactly `1 / (k + rank)`.
+- An id in both lists outranks ids at the same ranks that appear in only one.
+- Ties (same RRF score) are ordered by id; result is the same on repeated calls and independent of list order.
+- Empty input and empty lists return `[]`; a custom `k` is used.
 
-**Unit (`retrieve.test.ts`, no DB; `db` is a stub that fails the test if touched):**
+**Unit (`retrieve.test.ts`):** `mode` of `'bm25'`, `''` or `'Hybrid'` throws `RangeError` before any `embed` call and without touching the DB stub; the message does not contain the query.
 
-- `topK` of 0, 51, 2.5 or `NaN`, and `minScore` of -1.1, 1.1 or `NaN`, throw `RangeError` before any `embed` call.
-- A blank or whitespace-only query returns `[]` and makes no `embed` call.
-- An `EmbeddingError` from the provider propagates unchanged, and the DB stub is not touched.
-- The `RangeError` messages do not contain the query text.
+**Integration (`retrieve.int.test.ts`, same container and `seed` helper):**
+
+- **FTS works (criterion 1):** a chunk that matches the query only through stemming (no shared literal word) is returned in hybrid mode ahead of where vector mode ranks it, provided its cosine is above `minScore`.
+- **Fusion (criterion 2):** a chunk ranked high by both lists comes first in hybrid; the hybrid order matches `fuseRrf` applied to the vector order and the FTS order computed for the same data.
+- **Threshold gate:** a chunk that matches every query keyword but has cosine below `minScore` is not returned in hybrid mode. With `minScore` above every chunk's cosine, hybrid returns `[]`.
+- **`score` is cosine** in hybrid mode (within 1e-6 of the JS value), and each result carries the same document metadata as vector mode.
+- **Safe parsing:** queries with `'`, `"`, `&`, `|`, `!`, `:*`, `<->`, `(`, `)` and a stopword-only query do not throw; a stopword-only query in hybrid mode returns the vector-mode result.
+- **Flag (criterion 3):** no `mode` gives the vector-mode result (existing tests cover vector behaviour unchanged); `mode: 'hybrid'` and `mode: 'vector'` on the same data differ in the stemming case above.
+- **Tie-break:** identical-text chunks come back in chunk-id order in hybrid, repeatably.
+- **One embed call** with `([query], 'query')` in hybrid mode.
+- `topK` caps hybrid results.
 
 ## Boundaries
 
-- Always: embed through `EmbeddingProvider` with `'query'`, use `FakeEmbeddingProvider` in every automated test, keep the query out of logs and errors, use `.js` import extensions, put tests next to source.
-- Ask first: changing the default `topK` or `minScore` (needs eval numbers once #65 exists), adding a migration or index setting, moving the settings to env vars, adding filters, reranking or hybrid search.
-- Never: call a real embedding API from tests, touch the Neon database from tests, log or throw query text, or call `retrieve` with user text that has not been redacted.
+- Always: gate every returned chunk on cosine `>= minScore`, pass the query as a bound parameter, use `FakeEmbeddingProvider` in tests, keep the query out of logs and error messages, `.js` import extensions, tests next to source.
+- Ask first: changing `DEFAULT_MODE`, `RRF_K`, `HYBRID_CANDIDATES`, `minScore` or `topK` defaults (needs eval numbers, #70); adding an env var or migration; returning keyword-only hits below the threshold.
+- Never: interpolate query text into SQL, use `to_tsquery` on raw user text, call a real embedding API or the Neon DB from tests, log or throw query text.
 
 ## Success criteria
 
 - `pnpm lint && pnpm typecheck && pnpm test` pass, and `pnpm test:int` passes (needs Docker).
-- `retrieve`, `RetrievedChunk`, `RetrieveOptions`, `DEFAULT_TOP_K` and `DEFAULT_MIN_SCORE` are exported from `apps/api/src/retrieval/retrieve.ts`, and every behaviour in the testing strategy has a test.
-- Results are ordered by cosine similarity, capped at `topK`, filtered at `minScore`, and each carries its document's `source`, `title`, `license` and `url`.
+- `retrieve(db, embedder, q, { mode: 'hybrid' })` returns chunks found by vector or full-text search, fused by RRF, all with cosine `>= minScore`; `mode` omitted or `'vector'` returns exactly what it returns today.
+- `fuseRrf`, `RRF_K`, `RetrievalMode`, `DEFAULT_MODE` and `HYBRID_CANDIDATES` are exported, and every behaviour in the testing strategy has a test.
 - No migration, no env change, no new dependency.
 
-## Decisions
+## Open questions
 
-1. **Default `minScore` = 0.3, `topK` = 5** (PM decision, 2026-11-27). Placeholders until retrieval evals (#65); each call can override them, and changing the defaults needs eval numbers.
+1. **Default mode: resolved.** Stays `'vector'` until #70 measures hybrid with evals.
+2. **Flag: resolved.** Per-call `mode` option with the `DEFAULT_MODE` constant, no env var (consistent with #25's constants decision).
