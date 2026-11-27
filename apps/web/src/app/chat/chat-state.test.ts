@@ -72,6 +72,36 @@ describe('chatReducer', () => {
     });
   });
 
+  it.each(['refusal', 'emergency'] as const)(
+    'done(%s) without tokens stores kind and content, empty citations, idle',
+    (kind) => {
+      const s = event(event(submit(initialChatState), meta), {
+        type: 'done',
+        messageId: CONV,
+        kind,
+        content: 'fixed text',
+        citations: [],
+      });
+      expect(s.status).toBe('idle');
+      expect(s.messages[1]).toMatchObject({
+        state: 'done',
+        kind,
+        content: 'fixed text',
+        citations: [],
+      });
+    },
+  );
+
+  it.each(['refusal', 'emergency'] as const)(
+    'done(%s) after tokens replaces streamed text with done.content',
+    (kind) => {
+      let s = event(submit(initialChatState), token('streamed '));
+      s = event(s, token('draft'));
+      s = event(s, { type: 'done', messageId: CONV, kind, content: 'fixed text', citations: [] });
+      expect(s.messages[1]).toMatchObject({ state: 'done', kind, content: 'fixed text' });
+    },
+  );
+
   it.each([
     [
       { type: 'error', code: 'llm_unavailable' },

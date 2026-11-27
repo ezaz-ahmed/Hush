@@ -366,4 +366,46 @@ describe('Chat (jsdom)', () => {
       expect(await screen.findByRole('list', { name: 'Sources' })).toBeTruthy();
     });
   });
+
+  describe('refusals and emergencies', () => {
+    const kindDone = (kind: string, content: string) => ({
+      type: 'done',
+      messageId: ID,
+      kind,
+      content,
+      citations: [],
+    });
+
+    it('emergency shows the alert and call link and leaves the input enabled and focused', async () => {
+      const u = userEvent.setup();
+      fetchMock.mockResolvedValue(sseResponse(meta, kindDone('emergency', 'Get help now')));
+      render(<Chat />);
+      await u.type(box(), 'help{Enter}');
+      const alert = await screen.findByRole('alert');
+      expect(alert.textContent).toContain('Get help now');
+      expect(screen.getByRole('link', { name: 'Call 999' }).getAttribute('href')).toBe('tel:999');
+      expect(box().disabled).toBe(false);
+      expect(document.activeElement).toBe(box());
+    });
+
+    it('refusal shows the notice label and server text', async () => {
+      const u = userEvent.setup();
+      fetchMock.mockResolvedValue(sseResponse(meta, kindDone('refusal', 'No dosing advice')));
+      render(<Chat />);
+      await u.type(box(), 'how much{Enter}');
+      expect(await screen.findByText('No dosing advice')).toBeTruthy();
+      expect(screen.getByText("Hush can't answer this")).toBeTruthy();
+      expect(screen.queryByRole('alert')).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+    });
+
+    it('unknown kind fails closed with the generic error', async () => {
+      const u = userEvent.setup();
+      fetchMock.mockResolvedValue(sseResponse(meta, kindDone('mystery', 'hidden')));
+      render(<Chat />);
+      await u.type(box(), 'q{Enter}');
+      expect(await screen.findByText('Something went wrong. Please try again.')).toBeTruthy();
+      expect(screen.queryByText('hidden')).toBeNull();
+    });
+  });
 });

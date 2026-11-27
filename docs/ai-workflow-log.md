@@ -13,6 +13,13 @@ Format:
 - **Source:** commit sha(s) and/or PR number
 ```
 
+## 2026-11-28: Emergency number is 999 (Bangladesh), not #50's 995 / SOS 1767 (#35)
+
+- **Context:** Issue #50's body asks for "995" and "SOS 1767", which are Singapore numbers, but the clinic is set in Bangladesh (#17/#18) and all content already says 999. #35 also needed a way to tell refusals and emergencies apart before the server guardrails (#49–#51) exist.
+- **Decision:** The user chose 999. It lives once in `@hush/shared` as `EMERGENCY_NUMBER`, and the web builds the `tel:` link from it; #50's template should be tested against the same constant, and #50's issue body needs updating. The contract widens the existing `done.kind` to `answer | no_answer | refusal | emergency` (no new event). The API still only emits `answer`/`no_answer`; #49–#51 add the rest. `no_answer` and `refusal` share one amber "Hush can't answer this" notice. The emergency `role="alert"` stays inside the polite message log; a possible double screen-reader announcement was accepted over moving it out of conversation order.
+- **Verified by:** `emergency.test.ts`, shared `chat.test.ts`, `chat-state.test.ts`, `chat.test.tsx`, `chat-dom.test.tsx` (unknown kind fails closed); Opus review, then code review, security audit and test review all GO.
+- **Source:** PR for #35
+
 ## 2026-11-27: #34 is web-only consent; #41 owns the endpoints, identity and guard (#34)
 
 - **Context:** Issue #34 says the consent screen "records consent through the API", but no consent endpoint exists, and #41 already lists "Endpoints to grant and read consent" with the guard. Building `POST /consent` here would also force the user-identity decision early and ship a consent API with no guard behind it.

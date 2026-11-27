@@ -23,15 +23,18 @@ export const chatCitationSchema = z.strictObject({
 });
 export type ChatCitation = z.infer<typeof chatCitationSchema>;
 
+export const chatAnswerKindSchema = z.enum(['answer', 'no_answer', 'refusal', 'emergency']);
+export type ChatAnswerKind = z.infer<typeof chatAnswerKindSchema>;
+
 export const chatEventSchema = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('meta'), conversationId: z.uuid(), userMessageId: z.uuid() }),
   z.strictObject({ type: z.literal('token'), text: z.string() }),
   z.strictObject({
     type: z.literal('done'),
     messageId: z.uuid(), // the persisted assistant message
-    kind: z.enum(['answer', 'no_answer']),
+    kind: chatAnswerKindSchema,
     content: z.string(), // authoritative: replaces streamed tokens
-    citations: z.array(chatCitationSchema), // empty when kind is 'no_answer'
+    citations: z.array(chatCitationSchema), // empty unless kind is 'answer'
   }),
   z.strictObject({ type: z.literal('error'), code: z.enum(['llm_unavailable', 'internal']) }),
 ]);

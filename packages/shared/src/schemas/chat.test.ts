@@ -104,6 +104,8 @@ describe('chatEventSchema', () => {
     { type: 'token', text: 'hel\nlo' },
     { type: 'done', messageId: id, kind: 'answer', content: 'x [S1]', citations: [citation] },
     { type: 'done', messageId: id, kind: 'no_answer', content: 'x', citations: [] },
+    { type: 'done', messageId: id, kind: 'refusal', content: 'x', citations: [] },
+    { type: 'done', messageId: id, kind: 'emergency', content: 'x', citations: [] },
     { type: 'error', code: 'llm_unavailable' },
     { type: 'error', code: 'internal' },
   ];

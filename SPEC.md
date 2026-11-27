@@ -1,127 +1,123 @@
-# Spec: Consent screen and privacy notice page
+# Spec: UI states for refusals and emergencies
 
 ## Objective
 
-The web app has a `/chat` page (#32, #33) that lets anyone type a question straight away. Hush must not take a patient's question before they have agreed to the privacy notice. This ticket adds a versioned privacy notice page and a consent screen that sits in front of the chat: the chat input is not shown until the user consents, and the consent (with the notice version) is sent to the API. The API side (consent endpoints, identity, the enforcing guard) is #41; this ticket defines the shared contract #41 implements and builds the web side against it with a mocked `fetch`, as #32 did for `POST /chat`.
+The `/chat` page (#32, #33, #34) renders every finished assistant turn the same way, apart from citations on answers. Hush will soon return three kinds of non-answer: the fixed no-answer (weak retrieval, built), refusals for diagnosis and dosage requests (#51), and the fixed emergency response (#50). A patient must be able to tell at a glance that Hush declined to answer, and someone describing an emergency must see what to do and who to call before anything else. This ticket adds the shared signal for those kinds and the web UI for them. The server side (classifier #49, emergency flow #50, refusal templates #51) is later; as in #32 and #34, this ticket defines the contract those tickets implement and builds the web against it with a mocked `fetch`.
 
-**Acceptance criteria (from issue #34):**
+**Acceptance criteria (from issue #35):**
 
-- [ ] Consent required before first chat
-- [ ] Privacy notice page with version number
-- [ ] Records consent through the API
+- [ ] Distinct styling for refusal messages
+- [ ] Emergency message shown prominently with phone numbers
 
 **What exists today (checked in the code):**
 
-| Piece                             | State                                                                                                                                                                                                                                                                       |
-| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `consents` table (migration 0002) | `id`, `user_id` (FK `users`, cascade), `notice_version text NOT NULL`, `purpose consent_purpose NOT NULL` (enum: `chat` only), `granted_at`, `withdrawn_at`. No service, repository or endpoint writes it. `seed.ts` inserts consented / withdrawn / never-consented users. |
-| `users`, `audit_logs`             | Exist. `users.audit_subject_id` is the only id allowed in `audit_logs`. No append-only trigger yet (#43). Nothing writes audit rows yet.                                                                                                                                    |
-| Identity                          | **None.** `@ChatUserId()` reads `request.chatUserId`, set by "an upstream guard (#41)"; tests use `TestUserGuard` (`x-test-user`). No cookie or session. No open issue other than #41 names identity.                                                                       |
-| `ChatModule`                      | Built, not imported into `AppModule` (waits on #40, #41, #49 to #51). `app.test.ts` asserts `POST /chat` is 404.                                                                                                                                                            |
-| `apps/web/src/app/chat/`          | `page.tsx` (server) renders `'use client'` `<Chat />`. `lib/chat-client.ts` posts to the same-origin `/api/chat` rewrite, never throws, maps errors to fixed kinds. No consent check.                                                                                       |
-| `apps/web/src/app/page.tsx`       | Home page showing API health. No links.                                                                                                                                                                                                                                     |
-| `packages/shared/src/schemas/`    | `chat.ts`, `errors.ts`, `health.ts`. No consent schema, no notice version.                                                                                                                                                                                                  |
-| `apps/web` test tooling           | Vitest (Node by default), `jsdom` + Testing Library per file via `// @vitest-environment jsdom`. No new dependency needed.                                                                                                                                                  |
-| `content/`                        | Knowledge base, ingested by `pnpm ingest` (`content/**/*.md`). The notice must **not** live here or it would become retrievable answer content.                                                                                                                             |
+| Piece                                                     | State                                                                                                                                                                                                            |
+| --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `chatEventSchema` (`packages/shared/src/schemas/chat.ts`) | `done` has `kind: z.enum(['answer', 'no_answer'])`, authoritative `content`, `citations` (empty for `no_answer`, by comment only). No refusal or emergency signal anywhere.                                      |
+| `ChatService.finish` (`apps/api/src/chat/`)               | Sends `kind: 'no_answer'` with `NO_ANSWER_TEXT`, read from the versioned `apps/api/prompts/no-answer-v1.md`; stores `promptVersion: 'no-answer-v1'`. No guardrails. `ChatModule` is not mounted.                 |
+| `chat-state.ts` (web)                                     | `ChatMessage.kind?: 'answer' \| 'no_answer'` (a literal copy of the shared enum). `done` copies `kind`, `content`, `citations`.                                                                                  |
+| `ChatView` (`chat.tsx`)                                   | Answers get `CitedText` + `Sources`; every other done message is plain `whitespace-pre-wrap` text, styled like an answer. Errors are red text with Retry. The message list is `role="log" aria-live="polite"`.   |
+| Region and emergency number                               | Clinic is in **Bangladesh** (#17, #18, `docs/content-sources.md`). `content/clinic/scope.md`, `overview.md`, `services.md` and `answer-v1.md` say "call 999 or go to the nearest hospital emergency department". |
+| Issue #50 body                                            | Says "emergency number (995) and crisis support (SOS 1767)". Those are **Singapore** numbers and contradict the Bangladesh decision in #17/#18. See Open questions.                                              |
+| Web test tooling                                          | `chat.test.tsx` (`renderToStaticMarkup` of `ChatView`), `chat-dom.test.tsx` (jsdom + Testing Library, `fetch` stubbed), `chat-state.test.ts`. No new dependency needed.                                          |
 
 ## Decisions
 
-- **Split with #41: web + shared contract here, API there.** #41's body lists "Endpoints to grant and read consent", "NestJS guard rejects chat requests without valid consent" and "New notice version requires re-consent". Building `POST /consent` here would force an identity decision (who creates the `users` row, how the browser is identified) that has no ticket except #41, and would ship a half-done consent API without its guard. So #34 reads "records consent through the API" as: the UI's consent action is a call to the API's consent endpoint, defined by a shared zod contract, never a browser-only flag. #41 implements that contract server-side. Until then the flow is tested with a mocked `fetch` (same approach as #32 with `ChatModule` unmounted).
-- **Shared contract** (`packages/shared/src/schemas/consent.ts`, exported from the index):
-  - `PRIVACY_NOTICE_VERSION = 'v1'`: the one source of the current version, read by the web (display and gate) and later by #41 (re-consent check). Matches the `answer-v1` / `no-answer-v1` naming.
-  - `consentPurposeSchema = z.enum(['chat'])`, matching the DB enum.
-  - `grantConsentRequestSchema = z.strictObject({ purpose: consentPurposeSchema, noticeVersion: z.string().min(1) })`. No user id in the body: identity comes from the request (#41).
-  - `consentRecordSchema = z.strictObject({ purpose, noticeVersion, grantedAt: z.iso.datetime({ offset: true }) })`.
-  - Endpoints (implemented in #41): `GET /consent` returns 200 `consentRecordSchema` for the user's latest non-withdrawn `chat` consent, or 404 if none (401 if no identity yet). `POST /consent` with `grantConsentRequestSchema` returns 201 `consentRecordSchema`. The web reaches them as `/api/consent` through the existing rewrite with default (same-origin) credentials, so an identity cookie from #41 flows without changes.
-- **Gate in the client, wrapping `<Chat />`.** `chat/page.tsx` renders `<ConsentGate><Chat /></ConsentGate>`. On mount the gate calls `GET /api/consent`:
+- **Contract: widen `done.kind`, nothing else.** `kind: z.enum(['answer', 'no_answer', 'refusal', 'emergency'])`, exported as `chatAnswerKindSchema` / `ChatAnswerKind` so the web stops duplicating the literal union. No new event type, no new field.
+  - `refusal`: a fixed refusal template (diagnosis, dosage, off-topic), set by #51 (and #49 for off-topic). The reason is not sent: the UI styles every refusal the same, and the template text already explains itself.
+  - `emergency`: the fixed emergency template, set by #50. Per rule 5 it skips the LLM, so the stream is `meta` then `done` with no `token` events; the web must handle that (it already does for `no_answer`).
+  - `citations` stays an empty array for every kind except `answer`, as today (comment updated). The web ignores citations on non-answer kinds, as it does now.
+  - The API keeps emitting only `answer` and `no_answer` after this ticket; its code is unchanged and still type-checks against the wider enum.
+- **Where the copy lives.**
+  - The message body for every kind is the server's `content`, which for `no_answer`, `refusal` and `emergency` comes from versioned template files in `apps/api/prompts/` (`no-answer-v1.md` today; #50 and #51 add theirs). The web never hardcodes refusal or emergency wording, so the stored message, its recorded template version and what the patient saw stay the same text.
+  - The emergency **phone number** the UI turns into a call button is data, not template text: `EMERGENCY_NUMBER = '999'` in a new `packages/shared/src/emergency.ts`, exported from the index. One source for the web button now and for #50's test that its template mentions the same number. The web adds only short fixed UI labels around the server text (a heading and the button label built from the constant), in the component, like the existing "Sources" / "Retry" labels.
+- **Refusal styling** (`no_answer` and `refusal` share it: to the patient both mean "Hush won't answer this here"): a bordered, tinted box (neutral/amber, not red, which means error), with a visible text label "Hush can't answer this" above the server text, so the state is not colour-only. No Sources section, no Retry button (it is a final answer, not a failure).
+- **Emergency styling:** a full-width box at the top of that turn with strong contrast (red border and background tint), a visible heading "Medical emergency", the server text, and a large link button `<a href="tel:999">Call 999</a>` built from `EMERGENCY_NUMBER`. The container has `role="alert"` so screen readers announce it immediately, ahead of the polite log. It is a new element inserted when `done` arrives (the pending "Thinking..." element is replaced), so the alert fires once. No auto-focus move: focus returns to the input as today; the alert and the tab-reachable call link cover keyboard and screen-reader users.
+- **Input stays enabled after an emergency.** The patient may need to ask something else (or clarify a false positive); blocking chat would not make them safer.
+- **Unknown kinds fail closed.** A `done` with a kind outside the enum fails `chatEventSchema`, so `readChatEvents` treats the stream as broken and the turn shows the existing generic error, never an unstyled answer.
 
-  | Result                                                                             | UI                                   |
-  | ---------------------------------------------------------------------------------- | ------------------------------------ |
-  | pending                                                                            | "Loading..." only; chat not rendered |
-  | 200, body passes `consentRecordSchema`, `noticeVersion === PRIVACY_NOTICE_VERSION` | render `<Chat />`                    |
-  | anything else (404, 401, 5xx, network, bad body, older version)                    | consent screen                       |
-
-  Fail closed: an unknown state shows the consent screen, never the chat. An older version shows the screen again, which is the UI half of re-consent.
-
-- **Consent screen.** A short summary (what is collected, that it is not medical advice, that data can be deleted later), a link to `/privacy`, the version ("Privacy notice v1"), and an "I agree" button (explicit action, no pre-ticked box). "Not now" is a link to `/`. On "I agree": `POST /api/consent` with `{ purpose: 'chat', noticeVersion: PRIVACY_NOTICE_VERSION }`, button disabled while in flight. 201 with a valid body for the current version renders `<Chat />`. Any failure shows fixed copy "We couldn't save your consent. Please try again." and keeps the chat hidden; the button works again (no auto-retry).
-- **Consent client** `apps/web/src/lib/consent-client.ts`: `getConsent(signal)` and `grantConsent(signal)`, shaped like `streamChat`: never throw, validate every response with the shared schema, return `{ ok: true, record } | { ok: false }`. Abort on unmount, silent.
-- **Privacy notice page `/privacy`.** Server component `apps/web/src/app/privacy/page.tsx`, static JSX (no markdown renderer dependency; not in `content/`). Shows "Version v1" from `PRIVACY_NOTICE_VERSION` and an effective date. Sections: who we are (fictional clinic), what we collect (chat messages, consent records), how it is used (answering from the clinic knowledge base; text is redacted before any external AI provider), storage and retention, your rights (export, delete, withdraw consent; the my-data page is #36), contact. Readable without consent. Wording for retention: see Open questions.
-- **Notice text and version stay in step.** A test hashes the rendered notice body and compares it to a hash recorded for `PRIVACY_NOTICE_VERSION`; changing the text without bumping the version (and updating the hash) fails the test.
-- **No PII.** The consent request carries only purpose and version. Nothing is written to `console` or browser storage (`localStorage`, cookies set by JS). The server is the record of consent.
-
-**Out of scope:** any API change, including consent endpoints, identity/cookies, the consent guard, rejecting stale versions server-side, and audit entries for consent (#41, #43); mounting `ChatModule`; handling a 403 "consent required" from `POST /chat` mid-session (#41 defines it; today any non-2xx is the generic chat error); withdrawing consent and the my-data page (#36, #42); PDPA mapping (#48); e2e consent flow (#56); multiple languages; a site-wide header/footer; links from `/` (see Open questions).
+**Out of scope:** any API change, including the classifier (#49), the emergency flow and its template (#50), refusal templates (#51), output checks (#52); mounting `ChatModule`; a crisis/mental-health line (needs a verified Bangladesh number, see Open questions); per-reason refusal styling or a "book a consultation" link (the #51 template text carries that); redaction (#40); e2e tests (#56); a site-wide emergency banner outside chat; localisation.
 
 ## Risk
 
-**High-risk under CLAUDE.md (consent).** The UI gate is convenience, not enforcement: rule 3 says consent is enforced in the API, which is #41, and `ChatModule` stays unmounted until then, so nothing reaches an external provider because of this ticket. Tests are written first; the PR description calls out the consent change, that the endpoints do not exist yet, and that no real end-to-end run is possible.
+**High-risk under CLAUDE.md (guardrails).** This ticket only changes how guardrail results are shown, not whether they run; rule 5 is enforced server-side in #49 to #51. The risk is UI: an emergency rendered like a normal answer, or a refusal mistaken for advice. Tests are written first; the PR description calls out the guardrails area, that no server path emits `refusal` or `emergency` yet, and the 999 vs 995 conflict with #50.
 
 ## Design
 
 ### Files
 
-| File                                                   | Change                                                                          |
-| ------------------------------------------------------ | ------------------------------------------------------------------------------- |
-| `packages/shared/src/schemas/consent.ts` (new) + test  | Version constant and schemas above. Export from `src/index.ts`.                 |
-| `apps/web/src/lib/consent-client.ts` (new) + test      | `getConsent`, `grantConsent`.                                                   |
-| `apps/web/src/app/chat/consent-gate.tsx` (new) + tests | `'use client'`. `ConsentGate` (container) and `ConsentScreen` (presentational). |
-| `apps/web/src/app/chat/page.tsx`                       | Wrap `<Chat />` in `<ConsentGate>`.                                             |
-| `apps/web/src/app/privacy/page.tsx` (new) + test       | Notice page with metadata `Privacy notice · Hush`.                              |
+| File                                                                    | Change                                                                                                                 |
+| ----------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `packages/shared/src/schemas/chat.ts` + `chat.test.ts`                  | `chatAnswerKindSchema` with the four kinds, used by `done`; export `ChatAnswerKind`.                                   |
+| `packages/shared/src/emergency.ts` (new) + test, `index.ts`             | `EMERGENCY_NUMBER = '999'`.                                                                                            |
+| `apps/web/src/app/chat/chat-state.ts` + test                            | `kind?: ChatAnswerKind`; `done` stores `refusal` / `emergency` like the others.                                        |
+| `apps/web/src/app/chat/chat.tsx` + `chat.test.tsx`, `chat-dom.test.tsx` | Refusal and emergency rendering in `ChatView` (small `RefusalNotice` / `EmergencyNotice` components in the same file). |
 
-No new dependency, no env change, no migration, no API change.
+No new dependency, env var, migration or API code change.
 
 ### Code style
 
-```ts
-export const getConsent = async (signal: AbortSignal): Promise<ConsentResult> => {
-  try {
-    const res = await fetch('/api/consent', { signal });
-    if (!res.ok) return { ok: false };
-    const record = consentRecordSchema.safeParse(await res.json().catch(() => undefined));
-    return record.success ? { ok: true, record: record.data } : { ok: false };
-  } catch {
-    return { ok: false };
-  }
-};
+```tsx
+function EmergencyNotice({ content }: { content: string }) {
+  return (
+    <div role="alert" className="rounded border-2 border-red-700 bg-red-50 p-3">
+      <h2 className="font-semibold text-red-800">Medical emergency</h2>
+      <p className="mt-1 whitespace-pre-wrap">{content}</p>
+      <a
+        href={`tel:${EMERGENCY_NUMBER}`}
+        className="mt-2 inline-block rounded bg-red-700 px-4 py-2 font-semibold text-white"
+      >
+        Call {EMERGENCY_NUMBER}
+      </a>
+    </div>
+  );
+}
 ```
 
 ## Commands
 
 ```bash
 pnpm --filter @hush/shared build                       # after editing the shared schema
-pnpm --filter @hush/web exec vitest run src/app/chat/consent-gate-dom.test.tsx
+pnpm --filter @hush/web exec vitest run src/app/chat/chat.test.tsx
+pnpm --filter @hush/web exec vitest run src/app/chat/chat-dom.test.tsx
 pnpm lint && pnpm typecheck && pnpm test && pnpm build
 ```
 
 ## Testing strategy
 
-Tests first. `fetch` stubbed with `vi.stubGlobal`; DOM tests opt in with `// @vitest-environment jsdom` and call `cleanup()` in `afterEach`.
+Tests first. Same tooling as #32 to #34.
 
-- **`consent.test.ts` (shared):** request accepts `{ purpose: 'chat', noticeVersion: 'v1' }`; rejects extra keys (e.g. `userId`), unknown purpose, empty version. Record accepts an ISO datetime with offset, rejects a bad date and extra keys.
-- **`consent-client.test.ts`:** `getConsent` GETs `/api/consent` and passes the signal; 200 valid gives the record; 404, 401, 500, invalid body, `fetch` rejection give `{ ok: false }`. `grantConsent` POSTs JSON `{ purpose: 'chat', noticeVersion: PRIVACY_NOTICE_VERSION }` with `content-type: application/json`; 201 valid gives the record; failures as above.
-- **`consent-gate-dom.test.tsx` (jsdom):** while GET is pending, no chat textarea; GET 404 shows the consent screen with a `/privacy` link and the version, and no textarea; GET 200 current version renders the chat directly with no POST; GET 200 older version shows the screen; clicking "I agree" sends exactly one POST with the current version, disables the button while in flight, then renders the chat; POST failure shows the error copy, chat still hidden, button re-enabled; POST 201 with a different version keeps the chat hidden; unmount mid-request aborts the signal with no error shown.
-- **`consent-gate.test.tsx` (`renderToStaticMarkup`):** `ConsentScreen` has a real `<button>`, no checkbox pre-ticked, the "Not now" link to `/`.
-- **`privacy/page.test.tsx`:** renders "Version v1" from the constant; required section headings present; body hash matches the hash recorded for the current version.
-- **Privacy:** a `console` spy across the failure tests sees no calls; a `localStorage` spy sees no writes.
+- **`chat.test.ts` (shared):** `done` accepts each of `answer`, `no_answer`, `refusal`, `emergency`; still rejects `other`.
+- **`emergency.test.ts` (shared):** `EMERGENCY_NUMBER` is `'999'` (pins the decision so a change is deliberate).
+- **`chat-state.test.ts`:** `done` with `refusal` and with `emergency` stores kind and content and returns to idle; `meta` then `done(emergency)` with no `token` works.
+- **`chat.test.tsx` (`renderToStaticMarkup`):**
+  - `no_answer` and `refusal` render the label "Hush can't answer this", the server text, no Sources, no Retry, and not the error class.
+  - `emergency` renders `role="alert"`, the heading "Medical emergency", the server text, and a link with `href="tel:999"` and text "Call 999"; no Sources even if citations are (wrongly) present.
+  - `answer` renders none of the refusal or emergency markers (regression).
+  - The label and heading are text, so the state does not rely on colour.
+- **`chat-dom.test.tsx` (jsdom, `fetch` stubbed):** a stream of `meta` + `done(emergency)` shows the alert with the call link and leaves the input enabled and focused; a stream ending `done(refusal)` shows the refusal notice; a `done` with an unknown kind shows the generic error.
 
 ## Boundaries
 
-- Always: tests first; validate every API response with the shared schemas; fixed error copy; relative `/api/consent` URL; read the Next 16 docs in `apps/web/node_modules/next/dist/docs/` before writing Next code (metadata, `Link`).
-- Ask first: any API, DB or migration change; adding a dependency (e.g. a markdown renderer); changing `next.config.ts`; changing the endpoint contract after #41 starts.
-- Never: show the chat input before a valid current-version consent; store consent only in the browser; put a user id or any message text in the consent request; log anything client-side; put the notice in `content/`.
+- Always: tests first; render server `content` for every kind; take the number from `EMERGENCY_NUMBER`; keep emergency announced (`role="alert"`) and labelled in text, not colour only; read the Next 16 docs in `apps/web/node_modules/next/dist/docs/` before writing Next code.
+- Ask first: any API change; adding new event types or fields to the contract; adding a crisis line number; changing the emergency number.
+- Never: hardcode refusal or emergency wording in the web; show citations, Sources or Retry on a refusal or emergency; disable or hide the emergency call link; log message content client-side.
 
 ## Success criteria
 
 - `pnpm lint && pnpm typecheck && pnpm test && pnpm build` pass.
-- Every case in the testing strategy has a test.
-- `/privacy` shows the version; `/chat` shows no chat input until a current-version consent is read or granted via `/api/consent`.
-- No new dependency, env var, migration or API change.
-- The PR notes: high-risk (consent), endpoints land in #41, no real end-to-end run.
+- Every case in the testing strategy has a test (13 cases across 5 test files).
+- A `refusal` / `no_answer` turn is visibly distinct from an answer and from an error, with a text label.
+- An `emergency` turn is announced via `role="alert"`, has a "Medical emergency" heading and a `tel:999` "Call 999" link.
+- No new dependency, env var, migration or API code change.
+- The PR notes: high-risk (guardrails), no server path emits the new kinds until #49 to #51, and the #50 number conflict.
 
-## Decisions (open questions, resolved)
+## Open questions
 
-1. **Who builds `POST /consent`:** Decided: #41. #34 is web plus the shared zod contract only; #41 builds `GET`/`POST /consent`, identity and the guard.
-2. **Identity for #41:** Decided: the contract assumes an httpOnly cookie carried by the same-origin rewrite; note this on #41.
-3. **Notice format:** Decided: static JSX in `privacy/page.tsx` plus the hash/version-bump test. No markdown dependency.
-4. **Retention wording:** Decided: "kept for no longer than needed to answer and audit your questions; the exact period will be stated here before launch" in v1; bump to v2 when #46 sets it.
-5. **Link to the notice from `/`:** Decided: no link yet; add it when #37 or #36 touches layout.
-6. **Describe planned protections (redaction, encryption) in v1:** Decided: yes, the notice describes the system as it will run.
+All four decided by the user on 2026-11-28.
+
+1. **Emergency number: 999 (Bangladesh).** Decided: **999**, not 995 / SOS 1767 (Singapore, as #50's body says). #17/#18 placed the clinic in Bangladesh and every content file already says 999. #50's issue body needs updating to match (not edited here); keep its "verify the numbers before launch" item.
+2. **Crisis/mental-health line: none in this ticket.** Decided. #50 can add one to `emergency.ts` (as a list) once a Bangladesh number is verified, and the UI renders a second call link then.
+3. **`no_answer` styled the same as `refusal`.** Decided. The `kind` stays distinct in the contract and the DB for evals.
+4. **No refusal reason sent to the client.** Decided. Add a field later only if a UI needs it.
+5. **Emergency alert renders inside the message list.** Decided: `role="alert"` inside the `role="log" aria-live="polite"` list. A possible double announcement is accepted over a missed one.
