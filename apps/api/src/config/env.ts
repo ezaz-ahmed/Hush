@@ -13,14 +13,20 @@ export const envSchema = z.object({
   // Optional: only chat needs it; health, dev and tests run without it.
   ANTHROPIC_API_KEY: z.string().min(1).optional(),
   ANTHROPIC_MODEL: z.string().min(1).default('claude-haiku-5-5'),
+  // Requests per minute on POST /chat, per user id and per client IP.
+  CHAT_RATE_LIMIT_PER_USER: z.coerce.number().int().min(1).default(10),
+  CHAT_RATE_LIMIT_PER_IP: z.coerce.number().int().min(1).default(30),
 });
 
 export type Env = z.infer<typeof envSchema>;
 
-// `KEY=` in .env yields '': drop it for the DB vars, VOYAGE_API_KEY and the ANTHROPIC_* vars so it reads as unset (key absent; ANTHROPIC_MODEL falls back to its default).
+// `KEY=` in .env yields '': drop it for the DB vars, VOYAGE_API_KEY, the ANTHROPIC_* vars and the CHAT_RATE_LIMIT_* vars so it reads as unset (key absent; ANTHROPIC_MODEL and the rate limits fall back to their defaults).
 const blankIsUnset = ([key, value]: [string, unknown]): boolean =>
   !(
-    (key.startsWith('DATABASE_URL') || key === 'VOYAGE_API_KEY' || key.startsWith('ANTHROPIC_')) &&
+    (key.startsWith('DATABASE_URL') ||
+      key === 'VOYAGE_API_KEY' ||
+      key.startsWith('ANTHROPIC_') ||
+      key.startsWith('CHAT_RATE_LIMIT_')) &&
     value === ''
   );
 

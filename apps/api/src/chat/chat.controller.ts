@@ -1,13 +1,15 @@
 import type { OutgoingHttpHeaders } from 'node:http';
-import { Body, Controller, Logger, Post, Res } from '@nestjs/common';
+import { Body, Controller, Logger, Post, Res, UseGuards } from '@nestjs/common';
 import { chatRequestSchema, type ChatRequest } from '@hush/shared';
 import type { FastifyReply } from 'fastify';
 import { ZodValidationPipe } from '../common/zod-validation.pipe.js';
+import { ChatThrottlerGuard } from './chat-throttler.guard.js';
 import { ChatUserId } from './chat-user.decorator.js';
 import { ChatService } from './chat.service.js';
 import { sseFrame } from './sse.js';
 
 @Controller('chat')
+@UseGuards(ChatThrottlerGuard)
 export class ChatController {
   private readonly logger = new Logger(ChatController.name);
 

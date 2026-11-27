@@ -13,13 +13,21 @@ describe('validateEnv', () => {
   });
 
   it('defaults PORT to 5555', () => {
-    expect(validateEnv(base)).toEqual({ PORT: 5555, ANTHROPIC_MODEL: 'claude-haiku-5-5', ...base });
+    expect(validateEnv(base)).toEqual({
+      PORT: 5555,
+      ANTHROPIC_MODEL: 'claude-haiku-5-5',
+      CHAT_RATE_LIMIT_PER_USER: 10,
+      CHAT_RATE_LIMIT_PER_IP: 30,
+      ...base,
+    });
   });
 
   it('coerces PORT from a string', () => {
     expect(validateEnv({ ...base, PORT: '6000' })).toEqual({
       PORT: 6000,
       ANTHROPIC_MODEL: 'claude-haiku-5-5',
+      CHAT_RATE_LIMIT_PER_USER: 10,
+      CHAT_RATE_LIMIT_PER_IP: 30,
       ...base,
     });
   });
@@ -47,6 +55,8 @@ describe('validateEnv', () => {
       expect(validateEnv({ ...base, [name]: url })).toEqual({
         PORT: 5555,
         ANTHROPIC_MODEL: 'claude-haiku-5-5',
+        CHAT_RATE_LIMIT_PER_USER: 10,
+        CHAT_RATE_LIMIT_PER_IP: 30,
         ...base,
         [name]: url,
       });
@@ -77,6 +87,8 @@ describe('validateEnv', () => {
     expect(validateEnv({ ...base, DATABASE_URL_UNPOOLED: '' })).toStrictEqual({
       PORT: 5555,
       ANTHROPIC_MODEL: 'claude-haiku-5-5',
+      CHAT_RATE_LIMIT_PER_USER: 10,
+      CHAT_RATE_LIMIT_PER_IP: 30,
       ...base,
     });
   });
@@ -86,6 +98,8 @@ describe('validateEnv', () => {
       expect(validateEnv(base)).toStrictEqual({
         PORT: 5555,
         ANTHROPIC_MODEL: 'claude-haiku-5-5',
+        CHAT_RATE_LIMIT_PER_USER: 10,
+        CHAT_RATE_LIMIT_PER_IP: 30,
         ...base,
       });
     });
@@ -94,6 +108,8 @@ describe('validateEnv', () => {
       expect(validateEnv({ ...base, VOYAGE_API_KEY: '' })).toStrictEqual({
         PORT: 5555,
         ANTHROPIC_MODEL: 'claude-haiku-5-5',
+        CHAT_RATE_LIMIT_PER_USER: 10,
+        CHAT_RATE_LIMIT_PER_IP: 30,
         ...base,
       });
     });
@@ -102,6 +118,8 @@ describe('validateEnv', () => {
       expect(validateEnv({ ...base, VOYAGE_API_KEY: 'pa-test' })).toStrictEqual({
         PORT: 5555,
         ANTHROPIC_MODEL: 'claude-haiku-5-5',
+        CHAT_RATE_LIMIT_PER_USER: 10,
+        CHAT_RATE_LIMIT_PER_IP: 30,
         ...base,
         VOYAGE_API_KEY: 'pa-test',
       });
@@ -141,6 +159,29 @@ describe('validateEnv', () => {
     it('passes a set value through', () => {
       expect(validateEnv({ ...base, ANTHROPIC_MODEL: 'claude-test' }).ANTHROPIC_MODEL).toBe(
         'claude-test',
+      );
+    });
+  });
+
+  describe.each([
+    ['CHAT_RATE_LIMIT_PER_USER', 10],
+    ['CHAT_RATE_LIMIT_PER_IP', 30],
+  ] as const)('%s', (name, fallback) => {
+    it(`defaults to ${fallback}`, () => {
+      expect(validateEnv(base)[name]).toBe(fallback);
+    });
+
+    it('falls back to the default when blank', () => {
+      expect(validateEnv({ ...base, [name]: '' })[name]).toBe(fallback);
+    });
+
+    it('coerces a string', () => {
+      expect(validateEnv({ ...base, [name]: '7' })[name]).toBe(7);
+    });
+
+    it.each(['0', '-1', '1.5', 'abc'])('rejects %s with only the variable name', (value) => {
+      expect(() => validateEnv({ ...base, [name]: value })).toThrow(
+        new Error(`Invalid env: ${name}`),
       );
     });
   });

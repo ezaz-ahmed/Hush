@@ -48,7 +48,13 @@ describe('POST /chat (real Postgres, real Fastify)', () => {
       schema,
     });
     const moduleRef = await Test.createTestingModule({
-      imports: [ConfigModule.forRoot({ ignoreEnvFile: true }), ChatModule],
+      imports: [
+        ConfigModule.forRoot({
+          ignoreEnvFile: true,
+          load: [() => ({ CHAT_RATE_LIMIT_PER_USER: 1000, CHAT_RATE_LIMIT_PER_IP: 1000 })],
+        }),
+        ChatModule,
+      ],
     })
       .overrideProvider(DB)
       .useValue(db)

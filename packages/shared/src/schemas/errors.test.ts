@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { validationErrorSchema, validationIssueSchema } from './errors.js';
+import { rateLimitErrorSchema, validationErrorSchema, validationIssueSchema } from './errors.js';
 
 const body = {
   statusCode: 400,
@@ -41,5 +41,25 @@ describe('validationIssueSchema', () => {
 
   it('rejects a non-string, non-number path segment', () => {
     expect(validationIssueSchema.safeParse({ path: [{}], code: 'x' }).success).toBe(false);
+  });
+});
+
+describe('rateLimitErrorSchema', () => {
+  const limited = { statusCode: 429, error: 'Too Many Requests', retryAfter: 42 };
+
+  it('accepts the 429 body', () => {
+    expect(rateLimitErrorSchema.parse(limited)).toEqual(limited);
+  });
+
+  it.each([
+    ['an extra key', { ...limited, ip: '1.2.3.4' }],
+    ['another status', { ...limited, statusCode: 400 }],
+    ['another error name', { ...limited, error: 'Nope' }],
+    ['retryAfter 0', { ...limited, retryAfter: 0 }],
+    ['negative retryAfter', { ...limited, retryAfter: -1 }],
+    ['non-integer retryAfter', { ...limited, retryAfter: 1.5 }],
+    ['no retryAfter', { statusCode: 429, error: 'Too Many Requests' }],
+  ])('rejects %s', (_name, value) => {
+    expect(rateLimitErrorSchema.safeParse(value).success).toBe(false);
   });
 });
