@@ -11,6 +11,7 @@ const promptsDir = new URL('../../prompts/', import.meta.url);
 // Shipped prompt versions are frozen: stored messages.prompt_version must keep meaning what the model saw.
 const PROMPT_SHA256: Record<string, string> = {
   'answer-v1.md': '534ad993e354b16083bf7b3801a51577857ee69c4bfddb312cb4c9a3d41a671a',
+  'no-answer-v1.md': 'a0c260e3cb83ac0643778fc3143998f7f14cdb046227f8e16b1a481b47158566',
 };
 
 describe('answer prompt file', () => {

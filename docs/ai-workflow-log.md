@@ -13,6 +13,13 @@ Format:
 - **Source:** commit sha(s) and/or PR number
 ```
 
+## 2026-11-27: Chat endpoint built but not mounted; `done` is authoritative (#28)
+
+- **Context:** Issue #28 adds `POST /chat` with SSE, but redaction (#40), consent (#41) and guardrails (#49–#51) do not exist, so a live route would send raw user text to external providers (rules 1, 3, 5).
+- **Decision:** The user chose build-don't-mount: `ChatModule` is fully tested but not imported into `AppModule`, and a test in `app.test.ts` asserts `POST /chat` returns 404. The user id comes from `@ChatUserId()`, set by a guard that #41 owns (401 if missing); tests install their own guard. Tokens stream before citations are checked, so `done` is authoritative: it carries the checked content or the fixed no-answer, and #32 must replace streamed text with `done.content`. A minimal `checkCitations` and `no-answer-v1` ship here (#29 and #30 extend them in place). `fastify@5.12.8` is now a direct dependency of `@hush/api` for the `FastifyRequest`/`FastifyReply` types (already transitive via `@nestjs/platform-fastify`).
+- **Verified by:** `chat.int.test.ts`, `chat.service.int.test.ts`, `message.repository.int.test.ts`, `citations.test.ts`, `sse.test.ts`, `chat-user.decorator.test.ts`, `no-answer.test.ts`, `app.test.ts`, `packages/shared/src/schemas/chat.test.ts`
+- **Source:** PR for #28
+
 ## 2026-11-27: Answer prompt is a pinned plain file; delimiters are escaped, not nonced (#27)
 
 - **Context:** Issue #27 needs a versioned answer prompt with citation rules and delimited retrieved content. The first draft of rule 2 said to cite every statement, which conflicts with rule 1 (the fixed no-answer response when sources do not cover the question).

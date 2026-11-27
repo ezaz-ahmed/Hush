@@ -3,7 +3,7 @@ import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fa
 import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { healthStatusSchema, validationErrorSchema } from '@hush/shared';
+import { chatRequestSchema, healthStatusSchema, validationErrorSchema } from '@hush/shared';
 import { z } from 'zod';
 import { AppModule } from './app.module.js';
 import { validateEnv } from './config/env.js';
@@ -53,6 +53,18 @@ describe('app', () => {
 
   it('GET /nope returns 404', async () => {
     expect((await inject('/nope')).statusCode).toBe(404);
+  });
+
+  it('POST /chat returns 404: chat is gated until redaction (#40), consent (#41) and guardrails (#49-#51) land', async () => {
+    const res = await app
+      .getHttpAdapter()
+      .getInstance()
+      .inject({
+        method: 'POST',
+        url: '/chat',
+        payload: chatRequestSchema.parse({ message: 'How long does shipping take?' }),
+      });
+    expect(res.statusCode).toBe(404);
   });
 
   it('validates a routed body: good body gets 201', async () => {
