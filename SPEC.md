@@ -1,97 +1,127 @@
-# Spec: Citations and source panel
+# Spec: Consent screen and privacy notice page
 
 ## Objective
 
-#32 shows the answer as plain text, so a patient sees raw `[S1]` markers and has no way to check where a statement came from. This ticket turns the markers into numbered citation links and adds a source panel under each grounded answer showing the source's title, an excerpt and, when one exists, a link. The `done` event does not carry title, excerpt or link today, so the API adds them to the `done` citations. The prompt, the citation check, the stored message and the database do not change.
+The web app has a `/chat` page (#32, #33) that lets anyone type a question straight away. Hush must not take a patient's question before they have agreed to the privacy notice. This ticket adds a versioned privacy notice page and a consent screen that sits in front of the chat: the chat input is not shown until the user consents, and the consent (with the notice version) is sent to the API. The API side (consent endpoints, identity, the enforcing guard) is #41; this ticket defines the shared contract #41 implements and builds the web side against it with a mocked `fetch`, as #32 did for `POST /chat`.
 
-**Acceptance criteria (from issue #33):**
+**Acceptance criteria (from issue #34):**
 
-- [ ] Inline citation markers in answers
-- [ ] Panel showing source title, excerpt and link
+- [ ] Consent required before first chat
+- [ ] Privacy notice page with version number
+- [ ] Records consent through the API
 
 **What exists today (checked in the code):**
 
-| Piece                                         | State                                                                                                                                                                                                                                                           |
-| --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `apps/api/prompts/answer-v1.md`               | Rule 2: cite every statement as `[S1]` or `[S1][S3]`, using only ids from `<sources>`. `buildAnswerPrompt` gives each chunk `<source id="S1" title="...">`, with ids in retrieval order.                                                                        |
-| `apps/api/src/chat/citations.ts`              | `MARKER = /\[(S\d+(?:,\s*S\d+)*)\]/g` (single `[S1]` or grouped `[S1, S3]`). `checkCitations` returns the cited `AnswerSource`s, deduplicated, **in order of first use**. Unknown ids or no markers give the no-answer.                                         |
-| `packages/shared/src/schemas/chat.ts`         | `done { messageId, kind, content, citations }`. `chatCitationSchema` is `{ id: 'S#', chunkId, documentId, source }`. `source` is the repo-relative content path (e.g. `content/clinic/delivery.md`). **No title, excerpt or URL.**                              |
-| `ChatService.handle` / `finish`               | Has the full `RetrievedChunk[]` (`text`, `headingPath`, `title`, `url`, ...) in `found`, but `done.citations` is built from `AnswerSource` (`Citation & { id }`) only. The stored message keeps `{ chunkId, documentId, source }` (jsonb), without the `S#` id. |
-| `documents.url` / `frontmatterSchema`         | `url` is optional in frontmatter (`http`/`https` only) and nullable in the table. **None of the 7 current content files sets it**: all are `LicenseRef-Hush-Original` with no public page. Public-domain sources (`docs/content-sources.md`) would carry one.   |
-| Chunk `text`                                  | Up to 1000 chars, starting with its heading line (e.g. `## Where Hush Health delivers\n...`) when the chunk is under a heading.                                                                                                                                 |
-| `apps/web/src/app/chat/chat-state.ts`         | The assistant message stores `kind` and `citations` from `done` already. Nothing renders them.                                                                                                                                                                  |
-| `apps/web/src/app/chat/chat.tsx` (`ChatView`) | Renders `m.content` as one `whitespace-pre-wrap` `<p>`. No history endpoint exists, so citations only ever come from `done`.                                                                                                                                    |
+| Piece                             | State                                                                                                                                                                                                                                                                       |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `consents` table (migration 0002) | `id`, `user_id` (FK `users`, cascade), `notice_version text NOT NULL`, `purpose consent_purpose NOT NULL` (enum: `chat` only), `granted_at`, `withdrawn_at`. No service, repository or endpoint writes it. `seed.ts` inserts consented / withdrawn / never-consented users. |
+| `users`, `audit_logs`             | Exist. `users.audit_subject_id` is the only id allowed in `audit_logs`. No append-only trigger yet (#43). Nothing writes audit rows yet.                                                                                                                                    |
+| Identity                          | **None.** `@ChatUserId()` reads `request.chatUserId`, set by "an upstream guard (#41)"; tests use `TestUserGuard` (`x-test-user`). No cookie or session. No open issue other than #41 names identity.                                                                       |
+| `ChatModule`                      | Built, not imported into `AppModule` (waits on #40, #41, #49 to #51). `app.test.ts` asserts `POST /chat` is 404.                                                                                                                                                            |
+| `apps/web/src/app/chat/`          | `page.tsx` (server) renders `'use client'` `<Chat />`. `lib/chat-client.ts` posts to the same-origin `/api/chat` rewrite, never throws, maps errors to fixed kinds. No consent check.                                                                                       |
+| `apps/web/src/app/page.tsx`       | Home page showing API health. No links.                                                                                                                                                                                                                                     |
+| `packages/shared/src/schemas/`    | `chat.ts`, `errors.ts`, `health.ts`. No consent schema, no notice version.                                                                                                                                                                                                  |
+| `apps/web` test tooling           | Vitest (Node by default), `jsdom` + Testing Library per file via `// @vitest-environment jsdom`. No new dependency needed.                                                                                                                                                  |
+| `content/`                        | Knowledge base, ingested by `pnpm ingest` (`content/**/*.md`). The notice must **not** live here or it would become retrievable answer content.                                                                                                                             |
 
 ## Decisions
 
-- **The API sends the panel data in `done`.** The client cannot get a title, excerpt or link any other way, and adding a fetch-by-chunk endpoint would be more code and more surface. `chatCitationSchema` gains three fields:
-  - `title: z.string()`: the document title.
-  - `excerpt: z.string()`: the cited chunk's text with a leading markdown heading line removed (`/^#{1,6} [^\n]*\n/`). Not truncated server-side (chunks are at most 1000 chars); the panel clamps it visually.
-  - `url: z.url({ protocol: /^https?$/ }).nullable()`: `documents.url`. Same protocol rule as `frontmatterSchema`, so a bad value fails client-side validation instead of reaching an `href`.
-- **Built in `ChatService.finish` from `found`, not from `AnswerSource`.** Look up each cited chunk in `found` by `chunkId`. `answer-prompt.ts`, `answer-v1.md` and `checkCitations` stay untouched, so **no prompt change and no eval run needed**. The stored message's `citations` stay `{ chunkId, documentId, source }`: no migration.
-- **"Link" means the source's own URL, shown only when it exists.** Clinic content is original, has no public page, and the web app has no page that renders content files. So the panel shows "View source" (new tab, `rel="noopener noreferrer"`) only when `url` is not null. With today's content the link never shows. Building a `/sources/...` page in the web app to give clinic docs a link is out of scope (decided: out of scope).
-- **One marker grammar, shared.** Move the regex to `@hush/shared` as `CITATION_MARKER` (exported from `schemas/chat.ts`); `apps/api/src/chat/citations.ts` imports it. The web renderer uses the same regex, so the UI and the validator cannot disagree about what a marker is. Existing `citations.test.ts` cases prove the API behaviour is unchanged.
-- **Display numbers, not `S#`.** The answer shows `1`, `2`, `3` in order of first use: `n` is the citation's index in `done.citations` plus 1 (already first-use order). `S#` ids are prompt-internal and mean nothing to a patient.
-- **Rendering (pure function + view).** `splitCitations(content, citations)` in `apps/web/src/app/chat/citations.ts` returns `Array<string | { n: number; citation: ChatCitation }>`. A grouped marker `[S1, S3]` yields one part per id. A marker whose id is not in `citations` stays as plain text (cannot happen for a validated answer, but the view must not crash). Only messages with `state: 'done'` and `kind: 'answer'` are split; streaming text shows raw markers until `done` replaces it (accepted: `aria-busy` hides it from screen readers, and `done` is authoritative per #28).
-- **Markup.** Each marker is `<a href="#src-{id}-{n}" aria-label="Source {n}: {title}"><sup>{n}</sup></a>`. Under the answer: a "Sources" heading and an `<ol>`; each `<li id="src-{id}-{n}">` shows the title, the excerpt (plain text, `line-clamp-3`), and the link if any. `{id}` is the web app's local message id (`m.id` from ChatState), not the server `messageId`; it keeps ids unique across turns. Always visible, no toggle. No `no_answer` or error message gets a panel. Two chunks of the same document are two entries (each excerpt differs).
-- **No HTML from content.** Title and excerpt render as React text, never `dangerouslySetInnerHTML`. The excerpt is raw markdown text; no markdown rendering in this ticket.
+- **Split with #41: web + shared contract here, API there.** #41's body lists "Endpoints to grant and read consent", "NestJS guard rejects chat requests without valid consent" and "New notice version requires re-consent". Building `POST /consent` here would force an identity decision (who creates the `users` row, how the browser is identified) that has no ticket except #41, and would ship a half-done consent API without its guard. So #34 reads "records consent through the API" as: the UI's consent action is a call to the API's consent endpoint, defined by a shared zod contract, never a browser-only flag. #41 implements that contract server-side. Until then the flow is tested with a mocked `fetch` (same approach as #32 with `ChatModule` unmounted).
+- **Shared contract** (`packages/shared/src/schemas/consent.ts`, exported from the index):
+  - `PRIVACY_NOTICE_VERSION = 'v1'`: the one source of the current version, read by the web (display and gate) and later by #41 (re-consent check). Matches the `answer-v1` / `no-answer-v1` naming.
+  - `consentPurposeSchema = z.enum(['chat'])`, matching the DB enum.
+  - `grantConsentRequestSchema = z.strictObject({ purpose: consentPurposeSchema, noticeVersion: z.string().min(1) })`. No user id in the body: identity comes from the request (#41).
+  - `consentRecordSchema = z.strictObject({ purpose, noticeVersion, grantedAt: z.iso.datetime({ offset: true }) })`.
+  - Endpoints (implemented in #41): `GET /consent` returns 200 `consentRecordSchema` for the user's latest non-withdrawn `chat` consent, or 404 if none (401 if no identity yet). `POST /consent` with `grantConsentRequestSchema` returns 201 `consentRecordSchema`. The web reaches them as `/api/consent` through the existing rewrite with default (same-origin) credentials, so an identity cookie from #41 flows without changes.
+- **Gate in the client, wrapping `<Chat />`.** `chat/page.tsx` renders `<ConsentGate><Chat /></ConsentGate>`. On mount the gate calls `GET /api/consent`:
+
+  | Result                                                                             | UI                                   |
+  | ---------------------------------------------------------------------------------- | ------------------------------------ |
+  | pending                                                                            | "Loading..." only; chat not rendered |
+  | 200, body passes `consentRecordSchema`, `noticeVersion === PRIVACY_NOTICE_VERSION` | render `<Chat />`                    |
+  | anything else (404, 401, 5xx, network, bad body, older version)                    | consent screen                       |
+
+  Fail closed: an unknown state shows the consent screen, never the chat. An older version shows the screen again, which is the UI half of re-consent.
+
+- **Consent screen.** A short summary (what is collected, that it is not medical advice, that data can be deleted later), a link to `/privacy`, the version ("Privacy notice v1"), and an "I agree" button (explicit action, no pre-ticked box). "Not now" is a link to `/`. On "I agree": `POST /api/consent` with `{ purpose: 'chat', noticeVersion: PRIVACY_NOTICE_VERSION }`, button disabled while in flight. 201 with a valid body for the current version renders `<Chat />`. Any failure shows fixed copy "We couldn't save your consent. Please try again." and keeps the chat hidden; the button works again (no auto-retry).
+- **Consent client** `apps/web/src/lib/consent-client.ts`: `getConsent(signal)` and `grantConsent(signal)`, shaped like `streamChat`: never throw, validate every response with the shared schema, return `{ ok: true, record } | { ok: false }`. Abort on unmount, silent.
+- **Privacy notice page `/privacy`.** Server component `apps/web/src/app/privacy/page.tsx`, static JSX (no markdown renderer dependency; not in `content/`). Shows "Version v1" from `PRIVACY_NOTICE_VERSION` and an effective date. Sections: who we are (fictional clinic), what we collect (chat messages, consent records), how it is used (answering from the clinic knowledge base; text is redacted before any external AI provider), storage and retention, your rights (export, delete, withdraw consent; the my-data page is #36), contact. Readable without consent. Wording for retention: see Open questions.
+- **Notice text and version stay in step.** A test hashes the rendered notice body and compares it to a hash recorded for `PRIVACY_NOTICE_VERSION`; changing the text without bumping the version (and updating the hash) fails the test.
+- **No PII.** The consent request carries only purpose and version. Nothing is written to `console` or browser storage (`localStorage`, cookies set by JS). The server is the record of consent.
+
+**Out of scope:** any API change, including consent endpoints, identity/cookies, the consent guard, rejecting stale versions server-side, and audit entries for consent (#41, #43); mounting `ChatModule`; handling a 403 "consent required" from `POST /chat` mid-session (#41 defines it; today any non-2xx is the generic chat error); withdrawing consent and the my-data page (#36, #42); PDPA mapping (#48); e2e consent flow (#56); multiple languages; a site-wide header/footer; links from `/` (see Open questions).
 
 ## Risk
 
-- **Not high-risk per CLAUDE.md.** No change to redaction, consent, audit, retention, guardrails or prompts. Grounding (rule 6) is unchanged: `checkCitations` keeps its logic and only its regex moves.
-- **Rule 2 (no PII in logs).** The new fields are knowledge-base content, not user text, and are not logged. The web client still logs nothing.
-- **Rule 7 (retrieved content is data).** The excerpt shows knowledge-base text to the user verbatim; in dev it can include the planted injection fixture (`content/fixtures/`, skipped in production). Rendered as text, so it cannot run script or inject markup.
-- **Payload size.** Up to `topK` cited chunks of at most 1000 chars each in one `done` frame. Small.
+**High-risk under CLAUDE.md (consent).** The UI gate is convenience, not enforcement: rule 3 says consent is enforced in the API, which is #41, and `ChatModule` stays unmounted until then, so nothing reaches an external provider because of this ticket. Tests are written first; the PR description calls out the consent change, that the endpoints do not exist yet, and that no real end-to-end run is possible.
 
 ## Design
 
 ### Files
 
-| File                                                            | Change                                                                                                                                               |
-| --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `packages/shared/src/schemas/chat.ts`                           | `chatCitationSchema` gains `title`, `excerpt`, `url`. Export `CITATION_MARKER`.                                                                      |
-| `packages/shared/src/schemas/chat.test.ts`                      | Fixture gains the fields; new cases below.                                                                                                           |
-| `apps/api/src/chat/citations.ts`                                | Import `CITATION_MARKER` from `@hush/shared` instead of the local `MARKER`. No logic change.                                                         |
-| `apps/api/src/chat/chat.service.ts`                             | `finish` takes the retrieved chunks and builds `done.citations` with `title`, `excerpt`, `url`. Stored citations unchanged.                          |
-| `apps/api/src/chat/sse.test.ts`                                 | Fixture gains the fields (the schema is strict).                                                                                                     |
-| `apps/api/src/chat/chat.service.int.test.ts`                    | Grounded case expects the new `done` fields; stored citations still the three-field shape.                                                           |
-| `apps/web/src/app/chat/citations.ts` (new)                      | `splitCitations` (pure).                                                                                                                             |
-| `apps/web/src/app/chat/citations.test.ts` (new)                 | See below.                                                                                                                                           |
-| `apps/web/src/app/chat/chat.tsx`                                | `ChatView` renders split content and the sources panel for done answers. Small `Sources` component in the same file if it keeps `ChatView` readable. |
-| `apps/web/src/app/chat/chat.test.tsx`                           | Render cases below.                                                                                                                                  |
-| `apps/web/src/app/chat/chat-state.test.ts`, `chat-dom.test.tsx` | Citation fixtures gain the fields where typed as `ChatCitation`.                                                                                     |
+| File                                                   | Change                                                                          |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------- |
+| `packages/shared/src/schemas/consent.ts` (new) + test  | Version constant and schemas above. Export from `src/index.ts`.                 |
+| `apps/web/src/lib/consent-client.ts` (new) + test      | `getConsent`, `grantConsent`.                                                   |
+| `apps/web/src/app/chat/consent-gate.tsx` (new) + tests | `'use client'`. `ConsentGate` (container) and `ConsentScreen` (presentational). |
+| `apps/web/src/app/chat/page.tsx`                       | Wrap `<Chat />` in `<ConsentGate>`.                                             |
+| `apps/web/src/app/privacy/page.tsx` (new) + test       | Notice page with metadata `Privacy notice · Hush`.                              |
 
-No env, dependency, migration or prompt change.
+No new dependency, no env change, no migration, no API change.
+
+### Code style
+
+```ts
+export const getConsent = async (signal: AbortSignal): Promise<ConsentResult> => {
+  try {
+    const res = await fetch('/api/consent', { signal });
+    if (!res.ok) return { ok: false };
+    const record = consentRecordSchema.safeParse(await res.json().catch(() => undefined));
+    return record.success ? { ok: true, record: record.data } : { ok: false };
+  } catch {
+    return { ok: false };
+  }
+};
+```
+
+## Commands
+
+```bash
+pnpm --filter @hush/shared build                       # after editing the shared schema
+pnpm --filter @hush/web exec vitest run src/app/chat/consent-gate-dom.test.tsx
+pnpm lint && pnpm typecheck && pnpm test && pnpm build
+```
 
 ## Testing strategy
 
-Tests first. Unit tests use Vitest with fixtures; no real APIs. Integration tests (`pnpm test:int`, Testcontainers) cover the API change.
+Tests first. `fetch` stubbed with `vi.stubGlobal`; DOM tests opt in with `// @vitest-environment jsdom` and call `cleanup()` in `afterEach`.
 
-- **`chat.test.ts` (shared):** `done` with a citation carrying `title`, `excerpt`, `url: null` parses; with an `https` URL parses; `javascript:` and `ftp:` URLs fail; a citation missing `title` or `excerpt` fails; an extra key still fails (strict). `CITATION_MARKER` matches `[S1]`, `[S1, S3]`, `[S1,S3]` and not `[s1]`, `[S1,]`, `[ S1 ]`.
-- **`citations.test.ts` (API):** existing cases pass unchanged after the import swap.
-- **`chat.service.int.test.ts`:** grounded answer: `done.citations[0]` equals `{ id: 'S1', chunkId, documentId, source, title, excerpt, url }`, with the heading line stripped from `excerpt`; stored row citations are still `{ chunkId, documentId, source }`. Two cited chunks reversed in the reply come back in first-use order with matching excerpts.
-- **`citations.test.ts` (web):** plain text with no markers gives one string; `[S1]` gives text, `{ n: 1 }`, text; first-use numbering when the answer cites `S3` before `S1` and `citations` is `[S3, S1]`; grouped `[S1, S3]` gives two parts; a repeated `[S1]` gives the same `n`; an unknown `[S9]` stays as text; malformed markers stay as text; empty content gives `[]` or `['']` (pick one and assert it).
-- **`chat.test.tsx` (`renderToStaticMarkup`):** a done answer renders `<sup>` markers linking to `#src-{id}-{n}` with `aria-label` "Source n: title"; the panel lists title and excerpt in first-use order with matching `id`s; a citation with `url` renders a link with `target="_blank"` and `rel="noopener noreferrer"`, one with `url: null` renders no link; a `no_answer`, streaming or error message renders no panel and no marker links; a title containing `<b>` renders escaped.
+- **`consent.test.ts` (shared):** request accepts `{ purpose: 'chat', noticeVersion: 'v1' }`; rejects extra keys (e.g. `userId`), unknown purpose, empty version. Record accepts an ISO datetime with offset, rejects a bad date and extra keys.
+- **`consent-client.test.ts`:** `getConsent` GETs `/api/consent` and passes the signal; 200 valid gives the record; 404, 401, 500, invalid body, `fetch` rejection give `{ ok: false }`. `grantConsent` POSTs JSON `{ purpose: 'chat', noticeVersion: PRIVACY_NOTICE_VERSION }` with `content-type: application/json`; 201 valid gives the record; failures as above.
+- **`consent-gate-dom.test.tsx` (jsdom):** while GET is pending, no chat textarea; GET 404 shows the consent screen with a `/privacy` link and the version, and no textarea; GET 200 current version renders the chat directly with no POST; GET 200 older version shows the screen; clicking "I agree" sends exactly one POST with the current version, disables the button while in flight, then renders the chat; POST failure shows the error copy, chat still hidden, button re-enabled; POST 201 with a different version keeps the chat hidden; unmount mid-request aborts the signal with no error shown.
+- **`consent-gate.test.tsx` (`renderToStaticMarkup`):** `ConsentScreen` has a real `<button>`, no checkbox pre-ticked, the "Not now" link to `/`.
+- **`privacy/page.test.tsx`:** renders "Version v1" from the constant; required section headings present; body hash matches the hash recorded for the current version.
+- **Privacy:** a `console` spy across the failure tests sees no calls; a `localStorage` spy sees no writes.
 
 ## Boundaries
 
-- **Always:** validate the new fields with the shared strict schema; render content as text; run `pnpm lint && pnpm typecheck && pnpm test` (and `pnpm test:int` for the API change).
-- **Ask first:** any change to `answer-v1.md`, `buildAnswerPrompt` or the grounding logic in `checkCitations`; storing title/excerpt on messages (migration); a new endpoint or web route for sources.
-- **Never:** `dangerouslySetInnerHTML` for content; log citation content; show a panel for a `no_answer`.
+- Always: tests first; validate every API response with the shared schemas; fixed error copy; relative `/api/consent` URL; read the Next 16 docs in `apps/web/node_modules/next/dist/docs/` before writing Next code (metadata, `Link`).
+- Ask first: any API, DB or migration change; adding a dependency (e.g. a markdown renderer); changing `next.config.ts`; changing the endpoint contract after #41 starts.
+- Never: show the chat input before a valid current-version consent; store consent only in the browser; put a user id or any message text in the consent request; log anything client-side; put the notice in `content/`.
 
 ## Success criteria
 
-- A grounded answer shows numbered, clickable markers in place of `[S#]`, numbered 1..n in first-use order.
-- Under it, a Sources list shows each cited source's title and excerpt, plus a "View source" link when the document has a URL.
-- No-answer and error messages show neither.
-- Prompt, citation-check logic, stored message shape and database are unchanged.
-- `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build` and `pnpm test:int` pass.
+- `pnpm lint && pnpm typecheck && pnpm test && pnpm build` pass.
+- Every case in the testing strategy has a test.
+- `/privacy` shows the version; `/chat` shows no chat input until a current-version consent is read or granted via `/api/consent`.
+- No new dependency, env var, migration or API change.
+- The PR notes: high-risk (consent), endpoints land in #41, no real end-to-end run.
 
-## Open questions
+## Decisions (open questions, resolved)
 
-None.
-
-## Decided
-
-1. **Link:** the source's own optional `http`/`https` `url` frontmatter field only; "View source" shows only when present. No new source page. Today's content sets no `url`, so no link appears yet.
-2. **Excerpt:** send the full chunk (at most 1000 chars) and clamp it with CSS (`line-clamp-3`) in the UI. No server-side truncation.
+1. **Who builds `POST /consent`:** Decided: #41. #34 is web plus the shared zod contract only; #41 builds `GET`/`POST /consent`, identity and the guard.
+2. **Identity for #41:** Decided: the contract assumes an httpOnly cookie carried by the same-origin rewrite; note this on #41.
+3. **Notice format:** Decided: static JSX in `privacy/page.tsx` plus the hash/version-bump test. No markdown dependency.
+4. **Retention wording:** Decided: "kept for no longer than needed to answer and audit your questions; the exact period will be stated here before launch" in v1; bump to v2 when #46 sets it.
+5. **Link to the notice from `/`:** Decided: no link yet; add it when #37 or #36 touches layout.
+6. **Describe planned protections (redaction, encryption) in v1:** Decided: yes, the notice describes the system as it will run.

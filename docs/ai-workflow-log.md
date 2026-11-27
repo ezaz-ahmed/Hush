@@ -13,6 +13,13 @@ Format:
 - **Source:** commit sha(s) and/or PR number
 ```
 
+## 2026-11-27: #34 is web-only consent; #41 owns the endpoints, identity and guard (#34)
+
+- **Context:** Issue #34 says the consent screen "records consent through the API", but no consent endpoint exists, and #41 already lists "Endpoints to grant and read consent" with the guard. Building `POST /consent` here would also force the user-identity decision early and ship a consent API with no guard behind it.
+- **Decision:** The user chose web-only. #34 ships the `/privacy` notice (`PRIVACY_NOTICE_VERSION = 'v1'`, text-only sha256 test forces a version bump on any wording change), a fail-closed `ConsentGate` around `<Chat />`, `consent-client` (`GET`/`POST /api/consent`), and the shared zod contract (`grantConsentRequestSchema`, `consentRecordSchema`; no user id in the body) that #41 must implement. The UI gate is not enforcement; rule 3 is met only when #41's guard lands. Notes for #41: accept only the current notice version (or cap `noticeVersion` length), and use `SameSite` or CSRF protection if identity is a cookie. The v1 notice describes redaction and encryption that are still planned (#40); this is acceptable only while `ChatModule` stays unmounted.
+- **Verified by:** `consent-gate-dom.test.tsx` (pending, 404, old version, POST failure, unmount abort), `consent-client.test.ts`, `privacy/page.test.tsx`; Opus review, then code review, security audit and test review all GO after fixes.
+- **Source:** PR for #34
+
 ## 2026-11-27: Citation "link" is the optional frontmatter `url`; no source page (#33)
 
 - **Context:** Issue #33 asks for a Sources panel with title, excerpt and link, but the API's `done` citations carried only ids and a file path, and none of the clinic content files has a public URL.
