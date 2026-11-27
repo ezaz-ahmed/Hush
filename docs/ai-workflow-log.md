@@ -13,6 +13,13 @@ Format:
 - **Source:** commit sha(s) and/or PR number
 ```
 
+## 2026-11-27: Weak-retrieval no-answer already shipped in #28; #30 adds the below-threshold test (#30)
+
+- **Context:** Issue #30 asks to skip the LLM and return a fixed "I do not know, contact the clinic" response when no chunk passes the threshold. #28 already did this (`ChatService` returns `no-answer-v1` when `retrieve()` is empty), but its tests emptied the `chunks` table, so the case of chunks existing but none passing the threshold was never tested.
+- **Decision:** The user chose a test-only PR instead of the full spec, plan and review pipeline. A new integration test stores the question's vector negated (cosine -1), asserts `retrieve()` returns `[]` while chunks exist, then checks there is no LLM call, `done` is the no-answer, and the text says to contact the clinic. A subagent first used unrelated text, which scored 0.29 against the 0.3 threshold. That was too close, so it was replaced by the negated vector.
+- **Verified by:** `chat.service.int.test.ts` (24 passed)
+- **Source:** PR for #30
+
 ## 2026-11-27: Chat endpoint built but not mounted; `done` is authoritative (#28)
 
 - **Context:** Issue #28 adds `POST /chat` with SSE, but redaction (#40), consent (#41) and guardrails (#49–#51) do not exist, so a live route would send raw user text to external providers (rules 1, 3, 5).
