@@ -196,6 +196,59 @@ describe('ChatService (real Postgres)', () => {
       expect(assistant).toMatchObject({ content: NO_ANSWER_TEXT, promptVersion: 'no-answer-v1' });
     });
 
+    describe('citation failure warn', () => {
+      const warnFor = async (deltas: string[]) => {
+        const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+        const svc = make(new MockLlmProvider(deltas));
+        const cid = await svc.resolveConversation(userId);
+        await run(svc, cid);
+        return { warn, cid };
+      };
+
+      it('no_citations: one warn with conversation id and reason only', async () => {
+        const { warn, cid } = await warnFor(['Open 9 to 5.']);
+        expect(warn.mock.calls).toEqual([
+          [`citation check failed conversation=${cid} reason=no_citations unknown=`],
+        ]);
+      });
+
+      it('unknown_ids: lists the fabricated id', async () => {
+        const { warn, cid } = await warnFor(['Open 9 to 5 [S9].']);
+        expect(warn.mock.calls).toEqual([
+          [`citation check failed conversation=${cid} reason=unknown_ids unknown=S9`],
+        ]);
+      });
+
+      it('masks a long unknown id as S? so model-emitted digits never reach the log', async () => {
+        const { warn, cid } = await warnFor(['Call [S91234567].']);
+        expect(warn.mock.calls).toEqual([
+          [`citation check failed conversation=${cid} reason=unknown_ids unknown=S?`],
+        ]);
+        expect(String(warn.mock.calls[0]?.[0])).not.toContain('91234567');
+      });
+
+      it('grounded reply: no warn', async () => {
+        const { warn } = await warnFor(['Open 9 to 5 [S1].']);
+        expect(warn).not.toHaveBeenCalled();
+      });
+
+      it('empty retrieval no-answer: no warn', async () => {
+        await testDb.db.delete(chunks);
+        const { warn } = await warnFor(['unused']);
+        expect(warn).not.toHaveBeenCalled();
+      });
+
+      it('caps the logged unknown ids at 10', async () => {
+        const ids = Array.from({ length: 12 }, (_, i) => `S${i + 2}`);
+        const { warn, cid } = await warnFor([`Open ${ids.map((id) => `[${id}]`).join(' ')}.`]);
+        expect(warn.mock.calls).toEqual([
+          [
+            `citation check failed conversation=${cid} reason=unknown_ids unknown=${ids.slice(0, 10).join(',')}`,
+          ],
+        ]);
+      });
+    });
+
     it('LlmError: error llm_unavailable, user message kept, no assistant message', async () => {
       const svc = make(new MockLlmProvider(() => new LlmError('boom')));
       const cid = await svc.resolveConversation(userId);
