@@ -1,11 +1,9 @@
+import { CITATION_MARKER } from '@hush/shared';
 import type { AnswerSource } from '../prompts/answer-prompt.js';
 
 export type CitationCheck =
   | { grounded: true; citations: AnswerSource[] }
   | { grounded: false; reason: 'no_citations' | 'unknown_ids'; unknownIds: string[] };
-
-// A marker is `[S1]` or a group `[S1, S3]` / `[S1,S3]`; anything else (`[s1]`, `[S1,]`, `[ S1 ]`) is ignored.
-const MARKER = /\[(S\d+(?:,\s*S\d+)*)\]/g;
 
 /**
  * Grounded only if the reply has at least one citation and every cited id (including each id in a group) is a known source id.
@@ -17,7 +15,7 @@ export function checkCitations(reply: string, sources: AnswerSource[]): Citation
   const byId = new Map(sources.map((s) => [s.id, s]));
   const used = new Map<string, AnswerSource>();
   const unknown = new Set<string>();
-  for (const m of reply.matchAll(MARKER)) {
+  for (const m of reply.matchAll(CITATION_MARKER)) {
     for (const id of (m[1] ?? '').split(/,\s*/)) {
       // group 1 always set by the regex
       const s = byId.get(id);

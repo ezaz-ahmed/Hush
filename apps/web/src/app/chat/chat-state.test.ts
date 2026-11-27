@@ -5,7 +5,15 @@ import { chatReducer, initialChatState, type ChatState } from './chat-state.js';
 const CONV = '11111111-1111-4111-8111-111111111111';
 const meta: ChatEvent = { type: 'meta', conversationId: CONV, userMessageId: CONV };
 const token = (text: string): ChatEvent => ({ type: 'token', text });
-const citation = { id: 'S1', chunkId: CONV, documentId: CONV, source: 'faq' };
+const citation = {
+  id: 'S1',
+  chunkId: CONV,
+  documentId: CONV,
+  source: 'faq',
+  title: 'FAQ',
+  excerpt: 'Some text',
+  url: null,
+};
 
 const submit = (s: ChatState, text = 'hi', id = 'a') =>
   chatReducer(s, { type: 'submit', text, userId: `u-${id}`, assistantId: `a-${id}` });

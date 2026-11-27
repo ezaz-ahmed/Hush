@@ -1,13 +1,22 @@
 import { describe, expect, it } from 'vitest';
 import {
   CHAT_MESSAGE_MAX,
+  CITATION_MARKER,
   chatCitationSchema,
   chatEventSchema,
   chatRequestSchema,
 } from './chat.js';
 
 const id = '3f2b8a3e-6a0e-4d6c-9a57-0c1f3b6d2e11';
-const citation = { id: 'S1', chunkId: id, documentId: id, source: 'clinic/faq.md' };
+const citation = {
+  id: 'S1',
+  chunkId: id,
+  documentId: id,
+  source: 'clinic/faq.md',
+  title: 'FAQ',
+  excerpt: 'Some text.',
+  url: null,
+};
 
 describe('chatRequestSchema', () => {
   it('accepts a message without conversationId', () => {
@@ -55,6 +64,37 @@ describe('chatCitationSchema', () => {
     expect(chatCitationSchema.safeParse({ ...citation, id: 's1' }).success).toBe(false);
     expect(chatCitationSchema.safeParse({ ...citation, id: 'S1a' }).success).toBe(false);
     expect(chatCitationSchema.safeParse({ ...citation, extra: 1 }).success).toBe(false);
+  });
+
+  it('accepts an https url', () => {
+    const c = { ...citation, url: 'https://example.com/a' };
+    expect(chatCitationSchema.parse(c)).toEqual(c);
+  });
+
+  it('rejects non-http(s) urls', () => {
+    expect(chatCitationSchema.safeParse({ ...citation, url: 'javascript:alert(1)' }).success).toBe(
+      false,
+    );
+    expect(chatCitationSchema.safeParse({ ...citation, url: 'ftp://example.com/a' }).success).toBe(
+      false,
+    );
+  });
+
+  it('requires title and excerpt', () => {
+    expect(chatCitationSchema.safeParse({ ...citation, title: undefined }).success).toBe(false);
+    expect(chatCitationSchema.safeParse({ ...citation, excerpt: undefined }).success).toBe(false);
+  });
+});
+
+describe('CITATION_MARKER', () => {
+  const found = (s: string) => [...s.matchAll(CITATION_MARKER)].map((m) => m[1]);
+
+  it('matches single and grouped markers', () => {
+    expect(found('a [S1] b [S1, S3] c [S1,S3]')).toEqual(['S1', 'S1, S3', 'S1,S3']);
+  });
+
+  it('ignores malformed markers', () => {
+    expect(found('[s1] [S1,] [ S1 ]')).toEqual([]);
   });
 });
 
