@@ -10,6 +10,7 @@ import { LlmError, type LlmProvider, type LlmRequest } from '../llm/llm-provider
 import { MockLlmProvider } from '../llm/mock-llm-provider.js';
 import { ANSWER_SYSTEM_PROMPT } from '../prompts/answer-prompt.js';
 import { NO_ANSWER_TEXT } from '../prompts/no-answer.js';
+import { retrieve } from '../retrieval/retrieve.js';
 import { ANSWER_MAX_TOKENS, ChatService } from './chat.service.js';
 import { MessageRepository } from './message.repository.js';
 
@@ -176,6 +177,32 @@ describe('ChatService (real Postgres)', () => {
         promptVersion: 'no-answer-v1',
         citations: [],
       });
+    });
+
+    it('weak retrieval with chunks present: none pass the threshold, no LLM call, no-answer-v1', async () => {
+      const embedder = new FakeEmbeddingProvider();
+      // chunk vector = negated question vector, so cosine is -1: far below any sane threshold
+      const [q] = await embedder.embed([QUESTION], 'query');
+      await testDb.db.update(chunks).set({ embedding: (q ?? []).map((x) => -x) });
+      // precondition: the KB is non-empty yet retrieval finds nothing for QUESTION
+      expect(await testDb.db.select().from(chunks)).not.toHaveLength(0);
+      expect(await retrieve(testDb.db, embedder, QUESTION)).toEqual([]);
+
+      const llm = new MockLlmProvider();
+      const svc = make(llm, embedder);
+      const cid = await svc.resolveConversation(userId);
+      const events = await run(svc, cid);
+
+      expect(llm.calls).toEqual([]);
+      expect(events.map((e) => e.type)).toEqual(['meta', 'done']);
+      expect(events[1]).toMatchObject({
+        kind: 'no_answer',
+        content: NO_ANSWER_TEXT,
+        citations: [],
+      });
+      expect(NO_ANSWER_TEXT).toMatch(/contact the clinic/i);
+      const assistant = (await stored(cid)).find((r) => r.role === 'assistant');
+      expect(assistant).toMatchObject({ promptVersion: 'no-answer-v1', citations: [] });
     });
 
     it.each([
