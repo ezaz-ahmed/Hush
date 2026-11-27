@@ -9,7 +9,8 @@ declare module 'fastify' {
   }
 }
 
-const userIdSchema = z.uuid();
+/** The one rule for a valid chat user id; shared with the chat throttler. */
+export const userIdSchema = z.uuid();
 
 /** Reads the user id set by a guard; 401 if absent or malformed. */
 export const ChatUserId = createParamDecorator((_data: unknown, ctx: ExecutionContext): string => {

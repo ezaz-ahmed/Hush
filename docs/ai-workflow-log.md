@@ -13,6 +13,13 @@ Format:
 - **Source:** commit sha(s) and/or PR number
 ```
 
+## 2026-11-27: Chat rate limiting is API-only; 429 UI moves to #32 (#31)
+
+- **Context:** Issue #31 asks for per-user and per-IP limits with `@nestjs/throttler` and a 429 "handled in the UI", but there is no chat UI yet (#32).
+- **Decision:** The user chose API-only. `ChatThrottlerGuard` sits on `ChatController` (not app-wide, so `/health` is unaffected) and rejects before `reply.hijack()`, so a 429 is plain JSON `{ statusCode, error, retryAfter }` (shared `rateLimitErrorSchema`) with a single `Retry-After` header; per-limit headers are off and nothing is logged. Two named limits over 60 s: `ip` (`req.ip`) and `user` (`chatUserId`, skipped unless a valid uuid). Defaults `CHAT_RATE_LIMIT_PER_USER=10`, `CHAT_RATE_LIMIT_PER_IP=30`. Counters are in memory, per process. `trustProxy` is deferred to deployment: behind a proxy the IP limit acts as one global limit. #41 must order guards identity, then throttler, then consent. #32 must render the 429 using `rateLimitErrorSchema`.
+- **Verified by:** `chat-throttler.guard.test.ts`, `chat-throttler.int.test.ts` (8 cases incl. no LLM/embedding/DB work on 429 and no logging), `env.test.ts`, `errors.test.ts`; Opus review with no must-fixes.
+- **Source:** PR for #31
+
 ## 2026-11-27: Weak-retrieval no-answer already shipped in #28; #30 adds the below-threshold test (#30)
 
 - **Context:** Issue #30 asks to skip the LLM and return a fixed "I do not know, contact the clinic" response when no chunk passes the threshold. #28 already did this (`ChatService` returns `no-answer-v1` when `retrieve()` is empty), but its tests emptied the `chunks` table, so the case of chunks existing but none passing the threshold was never tested.

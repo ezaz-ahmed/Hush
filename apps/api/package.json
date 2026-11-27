@@ -9,6 +9,7 @@
     "@nestjs/config": "12.1.1",
     "@nestjs/core": "12.5.1",
     "@nestjs/platform-fastify": "12.5.1",
+    "@nestjs/throttler": "6.8.0",
     "drizzle-orm": "0.45.4",
     "fastify": "5.12.8",
     "pg": "8.23.1",

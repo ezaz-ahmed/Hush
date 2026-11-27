@@ -9,7 +9,14 @@ import { EMBEDDING_PROVIDER, LLM_PROVIDER } from './chat.tokens.js';
 
 const compile = () =>
   Test.createTestingModule({
-    imports: [ConfigModule.forRoot({ ignoreEnvFile: true, isGlobal: true }), ChatModule],
+    imports: [
+      ConfigModule.forRoot({
+        ignoreEnvFile: true,
+        isGlobal: true,
+        load: [() => ({ CHAT_RATE_LIMIT_PER_USER: 1000, CHAT_RATE_LIMIT_PER_IP: 1000 })],
+      }),
+      ChatModule,
+    ],
   })
     .overrideProvider(DB)
     .useValue({})

@@ -1,103 +1,124 @@
-# Spec: Citation validation
+# Spec: Rate limiting on chat endpoint
 
 ## Objective
 
-#27 told the model to cite every statement as `[S1]`, `[S1][S3]`, using only ids from the `<sources>` block. #28 shipped a minimal `checkCitations(reply, sources)` that parses `[S#]` markers and turns any reply with no marker or an unknown marker into the fixed no-answer. It returns a bare `{ grounded: false }`, so nobody can tell why a reply was rejected, and a fabricated id hidden in a grouped marker such as `[S1, S9]` is not parsed at all. This ticket hardens that function in place: it parses grouped markers too, reports why a reply failed and which ids were fabricated, and `ChatService` logs that flag (ids and reason only). The grounding rule itself does not change.
+`POST /chat` makes one embedding call and one LLM call per request, and both cost money. Nothing limits how often a client can call it. This ticket adds per-user and per-IP rate limits to `POST /chat` with `@nestjs/throttler`. A client over the limit gets a plain JSON `429` with a `Retry-After` header, before any database, embedding or LLM work and before the reply is hijacked for SSE. The 429 body gets a zod schema in `@hush/shared` so the chat UI (#32) can parse it.
 
-**Acceptance criteria (from issue #29):**
+**Acceptance criteria (from issue #31, amended):**
 
-- [ ] Parse citations from the model output
-- [ ] Reject or flag citations not in the retrieved set
-- [ ] Unit tests for valid, missing and fabricated citations
+- [ ] Per-user and per-IP limits with `@nestjs/throttler`
+- [ ] ~~Clear 429 response handled in the UI~~ **Amended (user decision):** the web app has no chat UI yet (#32). #31 is API-only: a clear JSON 429 with `Retry-After`, and a shared `rateLimitErrorSchema` in `packages/shared/src/schemas/errors.ts` for #32 to use. Handling the 429 in the UI moves to #32. No web code in this ticket.
 
-**What exists today (surveyed, not assumed):**
+**What exists today (checked in the code):**
 
-| Piece                                                   | State                                                                                                                                                                                                                        |
-| ------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `apps/api/src/chat/citations.ts`                        | `checkCitations(reply, sources): CitationCheck`. Regex `/\[(S\d+)\]/g`. Grounded only if at least one marker and every marker is a known id. Returns matched `AnswerSource`s, deduplicated, order of first use.              |
-| `citations.test.ts`                                     | 9 unit tests: one valid id, repeats, adjacent brackets, no markers, unknown id, mixed valid and unknown, no sources, malformed markers ignored (`[s1]`, `[S1a]`, `[S]`, `[ S1 ]`, `(S1)`), malformed next to valid.          |
-| `ChatService.handle`                                    | Calls `checkCitations` on the full reply after streaming. Grounded: stores reply, citations (without the `S#` id) and `answer-v1`. Not grounded: stores `NO_ANSWER_TEXT` with `no-answer-v1` and no citations. Logs nothing. |
-| `done` event                                            | Authoritative: carries the final `content` and `citations` (with `S#` id); the client replaces streamed tokens with it (#28 decision, #32 implements).                                                                       |
-| `Citation` (`database/schema.ts`), `messages.citations` | `{ chunkId, documentId, source }[]` jsonb. No column for a rejection reason.                                                                                                                                                 |
-| `answer-v1.md` rule 2                                   | "cite every statement ... in square brackets, for example [S1] or [S1][S3] ... Never invent an id." Hash-pinned.                                                                                                             |
-| `chat.service.int.test.ts`, `chat.int.test.ts`          | Already cover "no markers" and "`[S9]`" becoming the no-answer end to end, and spy on `Logger`/`console` to prove no message content is logged.                                                                              |
+| Piece                                          | State                                                                                                                                                                                                                                                                |
+| ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/api/src/chat/chat.controller.ts`         | `POST /chat`. The body goes through `ZodValidationPipe`, the user id through `@ChatUserId()`, then `resolveConversation` (a normal JSON 404 if needed), then `reply.hijack()` and SSE. No guards.                                                                    |
+| `apps/api/src/chat/chat-user.decorator.ts`     | `@ChatUserId()` reads `request.chatUserId`, which an upstream identity guard sets (#41). It checks the value is a uuid and returns 401 if it is missing or malformed.                                                                                                |
+| `apps/api/src/chat/testing/test-user.guard.ts` | Test-only global guard that copies the `x-test-user` header to `chatUserId`.                                                                                                                                                                                         |
+| `ChatModule`                                   | Not imported into `AppModule` (it waits for #40, #41 and #49 to #51). Tests mount it directly (`chat.int.test.ts`, `chat.module.test.ts`). Its provider factories read `ConfigService`, and those tests run without zod env validation, so they stub the env values. |
+| `apps/api/src/config/env.ts`                   | zod `envSchema`. No rate-limit vars.                                                                                                                                                                                                                                 |
+| `packages/shared/src/schemas/errors.ts`        | `validationErrorSchema` (strict, 400). No 429 schema.                                                                                                                                                                                                                |
+| `main.ts`                                      | `new FastifyAdapter()` with no options, so `trustProxy` is off and `request.ip` is the socket address. It listens on `localhost`.                                                                                                                                    |
 
-**Decisions:**
+**Dependency check, `@nestjs/throttler`:** latest is `6.8.0`, published 2026-11-16, so it is maintained. The peer deps include `@nestjs/common`/`@nestjs/core` `^12.0.0`, which covers our 12.5.1. It works with any HTTP adapter: `getRequestResponse` uses `switchToHttp()`, headers are set through `res.header()` (Fastify) or `res.setHeader()`, and the default tracker is `req.ip`, which Fastify provides. It has no runtime deps besides the Nest peers. It is the package the issue names. Pin it exactly (`"@nestjs/throttler": "6.8.0"`), as the other deps are pinned.
 
-- **Extend in place, keep the name and arguments.** `checkCitations(reply, sources)` stays in `citations.ts`; only the failure branch of `CitationCheck` gains fields. No new module, no new abstraction.
-- **Parsed syntax.** A citation marker is `[` + one or more ids `S<digits>` separated by commas (optional spaces after commas) + `]`: `[S1]`, `[S1][S3]`, `[S1, S3]`, `[S1,S3]`. Each id in a group is validated on its own. Everything else stays ignored, as today: lowercase `[s1]`, `[S1a]`, `[S]`, `[ S1 ]`, `(S1)`, `[S1 and S2]`. Grouped markers are parsed so a fabricated id cannot slip through inside `[S1, S9]` (today that reply passes if it also has a plain valid marker elsewhere). Ids are compared as exact strings, so `S01` and `S0` are unknown ids (sources are `S1`..`Sn`).
-- **"Reject", not "strip".** Any unknown id rejects the whole reply, and so does a reply with no valid marker; both become the fixed no-answer (CLAUDE.md rule 6), as today. Stripping the bad marker was rejected: it would leave the claim it was attached to uncited, and a model that invents one id has shown the reply is not trustworthy.
-- **"Flag" = a reason plus the unknown ids.** The failure branch becomes `{ grounded: false; reason: 'no_citations' | 'unknown_ids'; unknownIds: string[] }`. `unknownIds` is deduplicated, in order of first use, and empty for `no_citations`. When both apply (no valid id and some unknown ones), the reason is `unknown_ids`. `ChatService` logs one `warn`: `citation check failed conversation=<id> reason=<reason> unknown=<S9,S12>`. The ids can only match `S\d+`, but the digits are model output, so any logged id longer than 4 chars (`S` + more than 3 digits) is masked as `S?` to keep phone/NRIC-like numbers and huge lines out of the log (rule 2); `checkCitations` still returns the full ids. The `unknown=` list is capped at 10 ids so a runaway reply cannot bloat the log line.
-- **Streamed tokens are unchanged.** Tokens still stream before the check; the `done` event stays authoritative and carries the no-answer on rejection (#28 decision 3). No buffering, no retraction event.
-- **What is stored is unchanged.** Rejected: the no-answer text, `prompt_version = 'no-answer-v1'`, no citations (the rejected model reply is not persisted). Grounded: the reply, its cited sources and `answer-v1`. No migration; the rejection reason goes to the log only (Open question 2).
-- **No prompt change.** `answer-v1.md` already asks for `[S1]` / `[S1][S3]` and forbids invented ids. Accepting `[S1, S3]` is tolerance on our side, not a new instruction. No new version file, no hash change.
-- **No sentence-level coverage check.** "Every statement has a citation" and "the cited chunk supports the claim" are model-behaviour questions for evals and output checks (#52, #63 onward), not this parser.
+## Decisions
 
-**Out of scope:** changing `answer-v1` or the no-answer wording (#30); checking that each sentence is cited or that the cited chunk supports it (#52, evals); storing the rejection reason in the DB; metrics or tracing of rejections (#73, #74, #76); the citations panel (#33) and client-side replacement of streamed text (#32); retrying the model on rejection; redaction, consent, guardrails (#40, #41, #49 to #51); mounting `ChatModule`.
+- **Scope: `POST /chat` only.** Apply a `ChatThrottlerGuard` with `@UseGuards` on `ChatController`, not as `APP_GUARD`. That way `GET /health` is not throttled, and nothing changes once `ChatModule` is mounted in `AppModule`. `ThrottlerModule.forRootAsync` is imported in `ChatModule`. `ChatModule` stays unmounted.
+- **Two named throttlers, each with a 60 s window:**
+  - `ip`: tracker is the library default (`req.ip`, normalised). It counts every request, including ones that later get 401 or 400.
+  - `user`: tracker is `request.chatUserId`. It is skipped (`skipIf`) when `chatUserId` is not a valid uuid. Those requests count only against the IP limit, and `@ChatUserId()` returns 401 for them anyway. The check reuses the same `z.uuid()` rule as the decorator, so a junk value never becomes a key.
+  - A request has to pass both. The first throttler that blocks it decides `Retry-After`.
+- **Rejected before hijack.** Nest runs guards before pipes, param decorators and the handler, so a blocked request never reaches `ZodValidationPipe`, `resolveConversation`, retrieval or the LLM, and never hijacks the reply. The 429 is a normal Fastify JSON reply. Invalid bodies also count against the limits, which is intended (they cost a request too).
+- **Guard order relative to #41.** Intended order: identity guard (sets `chatUserId`) → `ChatThrottlerGuard` → consent guard → handler. The identity guard has to run first or the `user` throttler always skips. Today `TestUserGuard` is global, and Nest runs global guards before controller guards, so the order already holds in tests. Throttling before consent also caps how often the consent DB check can run. #41 has to keep this order (record it in the #41 spec). This ticket does not touch consent or guardrails.
+- **Config: two env vars, zod-validated, added to `apps/api/.env.example`:**
+  - `CHAT_RATE_LIMIT_PER_USER`: requests per user per minute, `z.coerce.number().int().min(1).default(10)`.
+  - `CHAT_RATE_LIMIT_PER_IP`: requests per IP per minute, `z.coerce.number().int().min(1).default(30)`. It is higher than the user limit because users behind shared NAT share an IP.
+  - The window stays fixed at 60 s. There is no window var, no block-duration var and no on/off switch. The `ThrottlerModule.forRootAsync` factory reads them with `config.getOrThrow`, so a missing value fails at boot instead of quietly turning throttling off. Tests without env validation supply numbers through `ConfigModule.forRoot({ load: [...] })`.
+- **429 response.** `ChatThrottlerGuard extends ThrottlerGuard` and overrides only `throwThrottlingException`. The override sets `Retry-After: <timeToBlockExpire seconds>` and throws `HttpException(body, 429)`.
+  - Set `setHeaders: false`. Without it the library sends `Retry-After-ip`, `Retry-After-user` and `X-RateLimit-*-{ip,user}` headers for named throttlers. With it, `Retry-After` is the only rate-limit header.
+  - The body matches the new shared schema:
+
+    ```ts
+    /** The 429 body POST /chat returns when a rate limit is hit. */
+    export const rateLimitErrorSchema = z.strictObject({
+      statusCode: z.literal(429),
+      error: z.literal('Too Many Requests'),
+      retryAfter: z.number().int().positive(), // seconds; same value as the Retry-After header
+    });
+    export type RateLimitError = z.infer<typeof rateLimitErrorSchema>;
+    ```
+
+    It is strict, like `validationErrorSchema`. `retryAfter` is also in the body so #32 can read it without a CORS `Access-Control-Expose-Headers` change. The body does not say which limit was hit. The client doesn't need to know, and leaving it out makes the limits a little harder to probe.
+- **No PII (rule 2).** The 429 body holds no IP, user id or tracker. Nothing is logged on a 429: no IP, no user id, no line at all. The library hashes storage keys (`sha256(class-handler-name-tracker)`) and keeps them only in memory, where they expire with the window.
+- **No redaction implications (rule 1).** The throttler reads only `req.ip` and `chatUserId`. It never reads message text and makes no external call, and it runs before every external call.
+- **Storage: the library's default in-memory store.** `shortcut: counters are per process, so N instances allow N x the limit; move to a shared store (Redis) if the API runs more than one instance.` Put this comment on the `ThrottlerModule` registration.
+- **`trustProxy`: not changed here.** With it off, behind a reverse proxy every client has the proxy's IP, so the `ip` limit acts as one global limit. The user limit still works. The deployment target is not decided and `ChatModule` is not mounted yet, so changing `main.ts` now would be guessing (Open question 1).
+
+**Out of scope:** any web/UI code, including handling the 429 in the UI (#32); mounting `ChatModule`; identity, consent, redaction and guardrails (#40, #41, #49 to #51); throttling other routes; a shared or distributed store; `trustProxy`/deployment config; per-route or tiered limits; metrics on 429s (#73 onward).
 
 ## Risk
 
-**Not in CLAUDE.md's listed high-risk areas** (redaction, consent, audit, retention, guardrails, prompts): no prompt file changes, no guardrail code. It is on the grounding path (rule 6) and adds a log line (rule 2), so tests are written first anyway and the PR calls both out.
+**Not in CLAUDE.md's high-risk list** (redaction, consent, audit, retention, guardrails, prompts). The guard comes before consent but does not change consent. The guard order above is written down so #41 keeps it. The PR states that the 429 path logs nothing and returns no PII.
 
-- **Weakening grounding (rule 6).** Mitigation: the accept set only grows by grouped markers, whose ids are all validated; every existing test keeps passing unchanged, plus new tests for groups with a fabricated id.
-- **Content in logs (rule 2).** Mitigation: the log line holds the conversation id, a fixed reason enum and ids matching `S\d+`. The existing "no content in logs" spies in both integration suites keep passing; a new assertion checks the exact warn line.
+- **Locking out real users with shared IPs.** Mitigation: the IP limit is set above the user limit, both are configurable, and `trustProxy` is an open question for deployment.
+- **Throttling not applied (misconfig).** Mitigation: `getOrThrow` on both vars, and an integration test on the mounted module.
 
 ## Design
 
 ### Files
 
-| File                                         | Change                                                                                                                              |
-| -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `apps/api/src/chat/citations.ts`             | Grouped-marker regex; failure branch with `reason` and `unknownIds`; doc comment updated (drop "#29 replaces it").                  |
-| `apps/api/src/chat/citations.test.ts`        | New cases below; existing cases updated only to the new failure shape (`toEqual` on `{ grounded: false }` becomes the full object). |
-| `apps/api/src/chat/chat.service.ts`          | On `grounded: false`, `this.logger.warn(...)` with id, reason and capped unknown ids, then the no-answer as today.                  |
-| `apps/api/src/chat/chat.service.int.test.ts` | The existing ungrounded cases assert the warn line (reason and ids) and still no content.                                           |
-
-No change to `@hush/shared`, the schema, `answer-v1.md`, `no-answer-v1.md` or the controller.
-
-### Shape
-
-```ts
-export type CitationCheck =
-  | { grounded: true; citations: AnswerSource[] }
-  | { grounded: false; reason: 'no_citations' | 'unknown_ids'; unknownIds: string[] };
-```
+| File                                                | Change                                                                                                                                                      |
+| --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/api/package.json`, `pnpm-lock.yaml`           | Add `"@nestjs/throttler": "6.8.0"`.                                                                                                                         |
+| `packages/shared/src/schemas/errors.ts` (+ `.test`) | `rateLimitErrorSchema`, `RateLimitError`. It is already exported through `index.ts` (`export * from './schemas/errors.js'`).                                |
+| `apps/api/src/config/env.ts` (+ `env.test.ts`)      | `CHAT_RATE_LIMIT_PER_USER`, `CHAT_RATE_LIMIT_PER_IP` with defaults.                                                                                         |
+| `apps/api/.env.example`                             | Both vars, with a one-line comment each and their defaults.                                                                                                 |
+| `apps/api/src/chat/chat-throttler.guard.ts` (new)   | `ChatThrottlerGuard` (overrides `throwThrottlingException`), plus the `ip`/`user` throttler options builder (`user` tracker and `skipIf`).                  |
+| `apps/api/src/chat/chat-user.decorator.ts`          | Export the existing uuid schema (or a small `parseChatUserId`) so the guard and the decorator share one rule. Decorator behaviour stays the same.           |
+| `apps/api/src/chat/chat.module.ts`                  | `ThrottlerModule.forRootAsync({ inject: [ConfigService], useFactory })` with `setHeaders: false` and the shortcut comment.                                  |
+| `apps/api/src/chat/chat.controller.ts`              | `@UseGuards(ChatThrottlerGuard)` on the class.                                                                                                              |
+| `chat.int.test.ts`, `chat.module.test.ts`           | Supply both limits through `ConfigModule` `load`. The existing suites get limits high enough that they never throttle, and their assertions stay unchanged. |
+| `chat-throttler.int.test.ts` (new)                  | The cases below.                                                                                                                                            |
 
 ## Testing strategy
 
-Tests first. Unit tests are pure (no DB, no network). The integration test uses the existing Testcontainers setup, `FakeEmbeddingProvider` and `MockLlmProvider`.
+Tests first. Everything is deterministic: `MockLlmProvider`, `FakeEmbeddingProvider`, and `app.inject` with a fixed `remoteAddress` per request. No real APIs.
 
-**Unit (`citations.test.ts`)**
+**Unit**
 
-- Valid: single `[S2]`; repeats deduplicated in order of first use; adjacent `[S1][S2]`; grouped `[S1, S3]` and `[S1,S3]` return both sources in order; grouped and plain mixed, deduplicated across both.
-- Missing: no markers, empty reply, only malformed markers, no sources at all: `reason: 'no_citations'`, `unknownIds: []`.
-- Fabricated: `[S9]`; `[S0]`, `[S01]`; valid plus unknown `[S1] ... [S9]`; unknown inside a group `[S1, S9]`; several unknowns with repeats (`unknownIds` deduplicated, order of first use); unknown ids with sources empty: all `reason: 'unknown_ids'` with the right `unknownIds`.
-- Still ignored: `[s1]`, `[S1a]`, `[S]`, `[ S1 ]`, `(S1)`, `[S1 and S2]`, `[S1,]`, next to a valid marker (grounded on the valid one only).
+- `errors.test.ts`: `rateLimitErrorSchema` accepts `{ statusCode: 429, error: 'Too Many Requests', retryAfter: 42 }`. It rejects extra keys (for example `ip`), status codes other than 429, `retryAfter` values of 0, negative or non-integer, and a missing `retryAfter`.
+- `env.test.ts`: the defaults apply (10 and 30) when the vars are unset. String values are coerced. `0`, negative, non-integer and non-numeric values are rejected.
+- `chat-throttler.guard.test.ts`: the `user` tracker returns `chatUserId`. `skipIf` is true when `chatUserId` is absent, not a string, or not a uuid, and false for a valid uuid. `throwThrottlingException` sets `Retry-After` to `timeToBlockExpire` and throws a 429 whose response passes `rateLimitErrorSchema`.
 
-**Integration (`chat.service.int.test.ts`)**
+**Integration (real Fastify, `ChatModule` mounted as in `chat.int.test.ts`, `TestUserGuard` global; low limits via `load`, e.g. user 2 and IP 3)**
 
-- Ungrounded, no markers: `warn` called once with `reason=no_citations` and an empty unknown list; no-answer stored and sent (existing assertions).
-- Ungrounded, `[S9]`: `warn` with `reason=unknown_ids unknown=S9`.
-- Grounded reply: no `warn`.
-- More than 10 unknown ids: the warn line lists only the first 10.
-- Existing no-content-in-logs test unchanged and passing.
+- User limit: requests 1 and 2 from user A get 200 SSE, and request 3 gets a 429 with `content-type: application/json` (not `text/event-stream`). The body passes `rateLimitErrorSchema`, the `Retry-After` header is a positive integer equal to `body.retryAfter`, and no `Retry-After-*` or `X-RateLimit-*` headers are present.
+- Rejected before work: on the 429 request the LLM mock and the embedding provider are not called, and no message row is written for that request.
+- The limits are per user: after A is blocked, user B on a different IP still gets 200.
+- IP limit: 4 requests from one IP spread over different users means the 4th gets 429. The same user from a different IP is still limited by the user limit.
+- No user id: requests without `x-test-user` get 401 until the IP limit is reached, then 429 (proves the `ip`-only path).
+- Invalid body: a 400 still counts toward the limit, and once over the limit the response is 429 instead of 400.
+- `GET /health` is not throttled: covered because the guard is controller-scoped. Assert that the chat controller carries the guard metadata, without mounting `AppModule`.
+- No PII in logs: spy on `Logger` and `console`. A 429 logs nothing that contains the IP, the user id or the message text.
+- Existing `chat.int.test.ts` and `chat.module.test.ts` cases pass unchanged.
 
 ## Boundaries
 
-- Always: tests first; keep `checkCitations` pure; log ids and the reason enum only; keep the no-answer path for every rejection; `.js` import extensions.
-- Ask first: changing `answer-v1.md` or adding a prompt version; stripping bad markers instead of rejecting; storing the rejection reason (needs a migration); changing the `done` event or shared schemas.
-- Never: present or persist a reply with an unknown id or no valid id as `kind: 'answer'`; log the reply, the question or chunk text; weaken or delete an existing citation test.
+- Always: tests first; reject before hijack; use `.js` import extensions; validate config with zod; keep `retryAfter` and `Retry-After` equal.
+- Ask first: mounting `ChatModule`; changing `trustProxy` or `main.ts`; adding a shared store such as Redis; throttling routes other than `/chat`; adding more env knobs; any web code.
+- Never: log IPs, user ids or message text; put the tracker or the name of the limit that was hit in the 429 body; make the throttler optional or bypassable by config; let a throttled request reach retrieval or the LLM.
 
 ## Success criteria
 
-- `pnpm lint && pnpm typecheck && pnpm test && pnpm test:int` pass.
-- Every case in the testing strategy has a test; all 9 existing `citations.test.ts` behaviours still hold.
-- No migration, no env change, no new dependency, no prompt file change.
-- PR description states that this is on the grounding path (rule 6) and adds a log line (rule 2), and how each is handled.
-- No evals exist yet (`evals/` is planned), so there is no before/after `pnpm eval` run; note that in the PR.
+- `pnpm lint && pnpm typecheck && pnpm test && pnpm test:int && pnpm build` pass.
+- Every case in the testing strategy has a test.
+- One new dependency (`@nestjs/throttler` 6.8.0, pinned), with the reason in the PR. Two new env vars, both in `.env.example`. No migration, no prompt change, no web change.
+- The PR notes the amended UI criterion (moved to #32), the in-memory store limit, the guard order #41 has to keep, and the `trustProxy` question.
+- No evals change (no prompt, retrieval or model change), so there is no `pnpm eval` run.
 
 ## Open questions
 
-1. **Accept grouped `[S1, S3]`, or reject a reply that uses it?** DECIDED: accept and validate each id (recommended default): accept and validate every id in the group (above). The stricter alternative, treating any bracket with an `S` id in a non-standard form as a rejection, would turn harmless formatting into no-answers.
-2. **Store the rejection reason on the message?** DECIDED: no, no migration (recommended default): no. It would need a migration for a debugging signal; the log line covers it until structured logging (#73) and evals measure citation failure rates.
-3. **Cap of 10 ids in the log line.** DECIDED: 10 (recommended default): 10. Any small number works; the point is a bounded line.
+1. **`trustProxy` when deployed.** Behind Vercel, Render, Fly or a similar proxy, `request.ip` is the proxy's address unless Fastify is created with `trustProxy` (ideally the hop count or proxy CIDR, not `true`, so a client cannot spoof `X-Forwarded-For`). **Proposed:** leave it for the deployment ticket and record it there. Until then the IP limit is effectively global behind a proxy.
+2. **Default limits.** Proposed: 10 per user and 30 per IP per minute. Is that right for an FAQ chat, or would you rather start lower (for example 5 per user) to protect LLM spend?
