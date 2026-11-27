@@ -8,11 +8,18 @@ export const chatRequestSchema = z.strictObject({
 });
 export type ChatRequest = z.infer<typeof chatRequestSchema>;
 
+// A marker is `[S1]` or a group `[S1, S3]` / `[S1,S3]`; anything else (`[s1]`, `[S1,]`, `[ S1 ]`) is ignored.
+// Has the `g` flag, so `.test()`/`.exec()` are stateful: callers use `matchAll`/`replace`/`split`.
+export const CITATION_MARKER = /\[(S\d+(?:,\s*S\d+)*)\]/g;
+
 export const chatCitationSchema = z.strictObject({
   id: z.string().regex(/^S\d+$/), // as cited in the text, e.g. [S1]
   chunkId: z.uuid(),
   documentId: z.uuid(),
   source: z.string(),
+  title: z.string(),
+  excerpt: z.string(),
+  url: z.url({ protocol: /^https?$/ }).nullable(),
 });
 export type ChatCitation = z.infer<typeof chatCitationSchema>;
 

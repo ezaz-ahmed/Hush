@@ -5,7 +5,7 @@ import { EmbeddingError, type EmbeddingProvider } from '../embedding/embedding-p
 import { LlmError, type LlmProvider } from '../llm/llm-provider.js';
 import { buildAnswerPrompt, type AnswerSource } from '../prompts/answer-prompt.js';
 import { NO_ANSWER_TEXT, NO_ANSWER_VERSION } from '../prompts/no-answer.js';
-import { retrieve } from '../retrieval/retrieve.js';
+import { retrieve, type RetrievedChunk } from '../retrieval/retrieve.js';
 import { EMBEDDING_PROVIDER, LLM_PROVIDER } from './chat.tokens.js';
 import { checkCitations } from './citations.js';
 import { MessageRepository } from './message.repository.js';
@@ -54,7 +54,7 @@ export class ChatService {
       const found = await retrieve(this.db, this.embedder, message);
       if (signal.aborted) return;
       if (found.length === 0) {
-        yield await this.finish(conversationId, NO_ANSWER_TEXT, [], null);
+        yield await this.finish(conversationId, NO_ANSWER_TEXT, [], null, []);
         return;
       }
 
@@ -74,7 +74,13 @@ export class ChatService {
 
       const check = checkCitations(reply, prompt.sources);
       if (check.grounded) {
-        yield await this.finish(conversationId, reply, check.citations, prompt.promptVersion);
+        yield await this.finish(
+          conversationId,
+          reply,
+          check.citations,
+          prompt.promptVersion,
+          found,
+        );
         return;
       }
       // digits are model output, so mask long ids (could be a phone/NRIC, or huge): rule 2
@@ -84,7 +90,7 @@ export class ChatService {
           .map((id) => (id.length <= 4 ? id : 'S?'))
           .join(',')}`,
       );
-      yield await this.finish(conversationId, NO_ANSWER_TEXT, [], null);
+      yield await this.finish(conversationId, NO_ANSWER_TEXT, [], null, []);
     } catch (err) {
       if (signal.aborted) return; // check before mapping: abort surfaces as LlmError
       this.logger.error(
@@ -104,6 +110,7 @@ export class ChatService {
     content: string,
     used: AnswerSource[], // as cited; stored without the S# id, which only means something in one prompt
     promptVersion: string | null,
+    found: RetrievedChunk[],
   ): Promise<ChatEvent> {
     const answered = promptVersion !== null;
     const messageId = await this.messages.insertAssistantMessage({
@@ -112,12 +119,22 @@ export class ChatService {
       citations: used.map(({ chunkId, documentId, source }) => ({ chunkId, documentId, source })),
       promptVersion: promptVersion ?? NO_ANSWER_VERSION,
     });
+    const byChunk = new Map(found.map((c) => [c.chunkId, c]));
     return {
       type: 'done',
       messageId,
       kind: answered ? 'answer' : 'no_answer',
       content,
-      citations: used,
+      citations: used.map((u) => {
+        const c = byChunk.get(u.chunkId);
+        // knowledge-base text, never logged; a cited chunk is always in `found`
+        return {
+          ...u,
+          title: c?.title ?? '',
+          excerpt: (c?.text ?? '').replace(/^#{1,6} [^\n]*\n/, ''),
+          url: c?.url ?? null,
+        };
+      }),
     };
   }
 }

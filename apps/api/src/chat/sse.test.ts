@@ -22,7 +22,17 @@ describe('sseFrame', () => {
       messageId: id,
       kind: 'answer',
       content: 'x [S1]',
-      citations: [{ id: 'S1', chunkId: id, documentId: id, source: 'a.md' }],
+      citations: [
+        {
+          id: 'S1',
+          chunkId: id,
+          documentId: id,
+          source: 'a.md',
+          title: 'A',
+          excerpt: 'x',
+          url: null,
+        },
+      ],
     };
     expect(sseFrame(e)).toBe(`event: done\ndata: ${JSON.stringify(e)}\n\n`);
   });

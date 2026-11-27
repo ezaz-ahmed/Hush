@@ -125,7 +125,17 @@ describe('ChatService (real Postgres)', () => {
         type: 'done',
         kind: 'answer',
         content: 'Open 9 to 5 [S1].',
-        citations: [{ id: 'S1', chunkId, documentId, source: 'hours.md' }],
+        citations: [
+          {
+            id: 'S1',
+            chunkId,
+            documentId,
+            source: 'hours.md',
+            title: 'Hours',
+            excerpt: QUESTION,
+            url: null,
+          },
+        ],
       });
 
       const rows = await stored(cid);
@@ -140,6 +150,44 @@ describe('ChatService (real Postgres)', () => {
       const user = rows.find((r) => r.role === 'user');
       expect(user?.content).toBe(QUESTION);
       expect(meta?.type === 'meta' && meta.userMessageId).toBe(user?.id);
+    });
+
+    it('fills title/excerpt/url per chunk, in first-use order, with the heading line stripped', async () => {
+      const [doc2] = await testDb.db
+        .insert(documents)
+        .values({
+          source: 'fees.md',
+          title: 'Fees',
+          url: 'https://example.com/fees',
+          license: 'LicenseRef-Hush-Original',
+          contentHash: 'h2',
+        })
+        .returning();
+      const [vec] = await new FakeEmbeddingProvider().embed([QUESTION], 'document');
+      // same vector as the query so it passes retrieval whatever its text
+      const [chunk2] = await testDb.db
+        .insert(chunks)
+        .values({
+          documentId: doc2?.id ?? '',
+          text: '## Fees\nConsults cost 50.',
+          headingPath: ['Fees'],
+          embedding: vec ?? [],
+        })
+        .returning();
+      const svc = make(new MockLlmProvider(['Both [S2][S1].']));
+      const events = await run(svc, await svc.resolveConversation(userId));
+      const done = events.find((e) => e.type === 'done');
+      const ids = done?.type === 'done' ? done.citations.map((c) => c.id) : [];
+      expect(ids).toEqual(['S2', 'S1']);
+      const byChunk = new Map(
+        (done?.type === 'done' ? done.citations : []).map((c) => [c.chunkId, c]),
+      );
+      expect(byChunk.get(chunk2?.id ?? '')).toMatchObject({
+        title: 'Fees',
+        excerpt: 'Consults cost 50.',
+        url: 'https://example.com/fees',
+      });
+      expect(byChunk.get(chunkId)).toMatchObject({ title: 'Hours', excerpt: QUESTION, url: null });
     });
 
     it('continues a conversation: a second turn appends two more messages', async () => {

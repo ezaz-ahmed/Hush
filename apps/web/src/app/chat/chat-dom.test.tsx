@@ -273,4 +273,97 @@ describe('Chat (jsdom)', () => {
     expect(signal.aborted).toBe(true);
     await act(async () => {}); // flush anything still pending
   });
+
+  describe('citations', () => {
+    const cite = (n: number, url: string | null, title = `Title ${n}`) => ({
+      id: `S${n}`,
+      chunkId: ID,
+      documentId: CONV,
+      source: 'faq',
+      title,
+      excerpt: `Excerpt ${n}`,
+      url,
+    });
+    const doneWith = (content: string, kind: string, citations: unknown[]) => ({
+      type: 'done',
+      messageId: ID,
+      kind,
+      content,
+      citations,
+    });
+    async function ask(...events: unknown[]) {
+      const u = userEvent.setup();
+      fetchMock.mockResolvedValue(sseResponse(meta, ...events));
+      render(<Chat />);
+      await u.type(box(), 'q{Enter}');
+    }
+
+    it('turns markers into links to the matching sources entries', async () => {
+      await ask(
+        doneWith('Yes [S1] and also [S2].', 'answer', [cite(1, null), cite(2, 'https://a.test/x')]),
+      );
+      const l1 = await screen.findByRole('link', { name: 'Source 1: Title 1' });
+      const l2 = screen.getByRole('link', { name: 'Source 2: Title 2' });
+      // local ChatState id of the assistant message is m2 (m1 is the user turn)
+      expect(l1.getAttribute('href')).toBe('#src-m2-1');
+      expect(l2.getAttribute('href')).toBe('#src-m2-2');
+      expect(document.getElementById('src-m2-1')).toBeTruthy();
+      expect(document.getElementById('src-m2-2')).toBeTruthy();
+      expect(screen.queryByText(/\[S1\]/)).toBeNull();
+    });
+
+    it('shows title and excerpt in a labelled Sources list', async () => {
+      await ask(doneWith('Yes [S1]', 'answer', [cite(1, null)]));
+      const list = await screen.findByRole('list', { name: 'Sources' });
+      expect(list.textContent).toContain('Title 1');
+      expect(list.textContent).toContain('Excerpt 1');
+      expect(screen.getByText('Excerpt 1').className).toContain('line-clamp-3');
+    });
+
+    it('shows View source only when url is set, in a new tab', async () => {
+      await ask(doneWith('A [S1] B [S2]', 'answer', [cite(1, 'https://a.test/x'), cite(2, null)]));
+      const view = await screen.findAllByRole('link', { name: /View source/ });
+      expect(view).toHaveLength(1);
+      expect(view[0]!.getAttribute('href')).toBe('https://a.test/x');
+      expect(view[0]!.getAttribute('target')).toBe('_blank');
+      expect(view[0]!.getAttribute('rel')).toBe('noopener noreferrer');
+    });
+
+    it('renders titles as plain text', async () => {
+      await ask(doneWith('A [S1]', 'answer', [cite(1, null, '<b>x</b>')]));
+      expect(await screen.findByText('<b>x</b>')).toBeTruthy();
+    });
+
+    it('shows no panel for a no-answer', async () => {
+      await ask(doneWith('I could not find that.', 'no_answer', []));
+      expect(await screen.findByText('I could not find that.')).toBeTruthy();
+      expect(screen.queryByRole('list', { name: 'Sources' })).toBeNull();
+    });
+
+    it('shows no panel for an error message', async () => {
+      await ask({ type: 'error', code: 'internal' });
+      expect(await screen.findByText('Something went wrong. Please try again.')).toBeTruthy();
+      expect(screen.queryByRole('list', { name: 'Sources' })).toBeNull();
+    });
+
+    it('shows raw markers and no panel while streaming', async () => {
+      const u = userEvent.setup();
+      const s = controlled();
+      fetchMock.mockResolvedValue(s.response);
+      render(<Chat />);
+      await u.type(box(), 'q{Enter}');
+      await act(async () => {
+        s.push(meta);
+        s.push(token('Hi [S1]'));
+      });
+      expect(await screen.findByText('Hi [S1]')).toBeTruthy();
+      expect(screen.queryByRole('link')).toBeNull();
+      expect(screen.queryByRole('list', { name: 'Sources' })).toBeNull();
+      await act(async () => {
+        s.push(doneWith('Hi [S1]', 'answer', [cite(1, null)]));
+        s.close();
+      });
+      expect(await screen.findByRole('list', { name: 'Sources' })).toBeTruthy();
+    });
+  });
 });

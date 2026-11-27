@@ -1,9 +1,62 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState, type FormEvent, type Ref } from 'react';
-import { CHAT_MESSAGE_MAX } from '@hush/shared';
+import { CHAT_MESSAGE_MAX, type ChatCitation } from '@hush/shared';
 import { streamChat } from '../../lib/chat-client';
+import { splitCitations } from './citations';
 import { chatReducer, initialChatState, type ChatAction, type ChatState } from './chat-state';
+
+function CitedText({
+  id,
+  content,
+  citations,
+}: {
+  id: string;
+  content: string;
+  citations: ChatCitation[];
+}) {
+  return splitCitations(content, citations).map((part, i) =>
+    typeof part === 'string' ? (
+      part
+    ) : (
+      <sup key={i}>
+        <a
+          href={`#src-${id}-${part.n}`}
+          aria-label={`Source ${part.n}: ${part.citation.title}`}
+          className="underline"
+        >
+          {part.n}
+        </a>
+      </sup>
+    ),
+  );
+}
+
+function Sources({ id, citations }: { id: string; citations: ChatCitation[] }) {
+  return (
+    <section aria-labelledby={`sources-${id}`} className="mt-2">
+      <h2 id={`sources-${id}`} className="text-xs font-medium text-neutral-500">
+        Sources
+      </h2>
+      <ol
+        aria-labelledby={`sources-${id}`}
+        className="mt-1 flex list-inside list-decimal flex-col gap-2"
+      >
+        {citations.map((c, i) => (
+          <li key={c.id} id={`src-${id}-${i + 1}`} className="scroll-mt-4">
+            <span className="font-medium">{c.title}</span>
+            <p className="line-clamp-3 text-neutral-600">{c.excerpt}</p>
+            {c.url && (
+              <a href={c.url} target="_blank" rel="noopener noreferrer" className="underline">
+                View source
+              </a>
+            )}
+          </li>
+        ))}
+      </ol>
+    </section>
+  );
+}
 
 export type ChatViewProps = {
   state: ChatState;
@@ -53,9 +106,16 @@ export function ChatView({
                     m.state === 'error' ? 'whitespace-pre-wrap text-red-600' : 'whitespace-pre-wrap'
                   }
                 >
-                  {m.content}
+                  {m.state === 'done' && m.kind === 'answer' ? (
+                    <CitedText id={m.id} content={m.content} citations={m.citations ?? []} />
+                  ) : (
+                    m.content
+                  )}
                 </p>
               )}
+              {m.state === 'done' && m.kind === 'answer' && m.citations?.length ? (
+                <Sources id={m.id} citations={m.citations} />
+              ) : null}
               {m.state === 'error' && m.id === lastId && (
                 <button
                   type="button"

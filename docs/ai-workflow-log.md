@@ -13,6 +13,13 @@ Format:
 - **Source:** commit sha(s) and/or PR number
 ```
 
+## 2026-11-27: Citation "link" is the optional frontmatter `url`; no source page (#33)
+
+- **Context:** Issue #33 asks for a Sources panel with title, excerpt and link, but the API's `done` citations carried only ids and a file path, and none of the clinic content files has a public URL.
+- **Decision:** The user chose the optional http/https frontmatter `url`, shown as "View source" only when present, so no links appear until public sources are ingested; a page rendering each content file was rejected as extra scope. The API sends the full chunk as `excerpt` (leading heading stripped) and the UI clamps it to 3 lines. `done` citations gain `title`/`excerpt`/`url` from the chunks retrieval already returns (no extra queries); stored citations keep their 3-field shape (no migration); the prompt is unchanged. The marker regex moved to `@hush/shared` (`CITATION_MARKER`) so the API check and the web renderer share it.
+- **Verified by:** Shared schema tests (rejects `javascript:`/`ftp:` urls), `chat.service.int.test.ts` (fields per chunk, first-use order), `citations.test.ts` (mutation-checked), `chat-dom.test.tsx`; Opus review, security audit and test review all GO.
+- **Source:** PR for #33
+
 ## 2026-11-27: SSE needs `no-transform` to stream through the Next rewrite (#32)
 
 - **Context:** The chat UI calls the API through Next's `/api/:path*` rewrite. A local check with a stub SSE server under `next start` showed Next's built-in gzip buffers the whole stream when the client sends `Accept-Encoding: gzip` (browsers always do): all frames arrived together at ~3.5 s instead of ~700 ms apart. `content-encoding: identity` did not help.
