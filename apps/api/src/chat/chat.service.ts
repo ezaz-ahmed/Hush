@@ -12,6 +12,8 @@ import { MessageRepository } from './message.repository.js';
 
 export const ANSWER_MAX_TOKENS = 1024; // model config changes go through evals
 
+const MAX_LOGGED_UNKNOWN_IDS = 10;
+
 @Injectable()
 export class ChatService {
   private readonly logger = new Logger(ChatService.name);
@@ -71,9 +73,18 @@ export class ChatService {
       if (signal.aborted) return;
 
       const check = checkCitations(reply, prompt.sources);
-      yield check.grounded
-        ? await this.finish(conversationId, reply, check.citations, prompt.promptVersion)
-        : await this.finish(conversationId, NO_ANSWER_TEXT, [], null);
+      if (check.grounded) {
+        yield await this.finish(conversationId, reply, check.citations, prompt.promptVersion);
+        return;
+      }
+      // digits are model output, so mask long ids (could be a phone/NRIC, or huge): rule 2
+      this.logger.warn(
+        `citation check failed conversation=${conversationId} reason=${check.reason} unknown=${check.unknownIds
+          .slice(0, MAX_LOGGED_UNKNOWN_IDS)
+          .map((id) => (id.length <= 4 ? id : 'S?'))
+          .join(',')}`,
+      );
+      yield await this.finish(conversationId, NO_ANSWER_TEXT, [], null);
     } catch (err) {
       if (signal.aborted) return; // check before mapping: abort surfaces as LlmError
       this.logger.error(
