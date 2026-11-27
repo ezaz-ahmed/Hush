@@ -103,4 +103,66 @@ describe('ChatView', () => {
     );
     expect(render({}, { input: 'hi' })).not.toContain('disabled=""');
   });
+
+  describe('non-answer kinds', () => {
+    const cite = [
+      {
+        id: 'c1',
+        chunkId: 'k1',
+        documentId: 'd1',
+        source: 's',
+        title: 'T',
+        excerpt: 'e',
+        url: null,
+      },
+    ];
+    const done = (kind: 'answer' | 'no_answer' | 'refusal' | 'emergency') =>
+      render({
+        messages: [
+          user,
+          {
+            id: 'a1',
+            role: 'assistant',
+            content: 'server text [S1]',
+            state: 'done',
+            kind,
+            citations: cite,
+          },
+        ],
+      });
+
+    it.each(['no_answer', 'refusal'] as const)(
+      '%s shows the label and server text, no Sources, Retry, error class or alert',
+      (kind) => {
+        const html = done(kind);
+        expect(html).toContain('Hush can&#x27;t answer this');
+        expect(html).toContain('server text [S1]');
+        expect(html).not.toContain('Sources');
+        expect(html).not.toContain('Retry');
+        expect(html).not.toContain('text-red-600');
+        expect(html).not.toContain('role="alert"');
+      },
+    );
+
+    it('emergency shows an alert, heading, server text and a tel link, no Sources', () => {
+      const html = done('emergency');
+      expect(html).toContain('role="alert"');
+      expect(html).toContain('Medical emergency');
+      expect(html).toContain('self-stretch');
+      expect(html).not.toContain('self-start');
+      expect(html).toContain('server text [S1]');
+      expect(html).toMatch(/<a[^>]*href="tel:999"[^>]*>Call 999<\/a>/);
+      expect(html).not.toContain('Sources');
+      expect(html).not.toContain('can&#x27;t answer');
+    });
+
+    it('answer shows none of the refusal or emergency markers', () => {
+      const html = done('answer');
+      expect(html).not.toContain('role="alert"');
+      expect(html).not.toContain('Medical emergency');
+      expect(html).not.toContain('can&#x27;t answer');
+      expect(html).not.toContain('tel:');
+      expect(html).not.toContain('self-stretch');
+    });
+  });
 });

@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState, type FormEvent, type Ref } from 'react';
-import { CHAT_MESSAGE_MAX, type ChatCitation } from '@hush/shared';
+import { CHAT_MESSAGE_MAX, EMERGENCY_NUMBER, type ChatCitation } from '@hush/shared';
 import { streamChat } from '../../lib/chat-client';
 import { splitCitations } from './citations';
 import { chatReducer, initialChatState, type ChatAction, type ChatState } from './chat-state';
@@ -58,6 +58,30 @@ function Sources({ id, citations }: { id: string; citations: ChatCitation[] }) {
   );
 }
 
+function RefusalNotice({ content }: { content: string }) {
+  return (
+    <div className="rounded border border-amber-400 bg-amber-50 p-3">
+      <p className="font-semibold text-amber-900">Hush can&apos;t answer this</p>
+      <p className="mt-1 whitespace-pre-wrap">{content}</p>
+    </div>
+  );
+}
+
+function EmergencyNotice({ content }: { content: string }) {
+  return (
+    <div role="alert" className="rounded border-2 border-red-700 bg-red-50 p-3">
+      <h2 className="font-semibold text-red-800">Medical emergency</h2>
+      <p className="mt-1 whitespace-pre-wrap">{content}</p>
+      <a
+        href={`tel:${EMERGENCY_NUMBER}`}
+        className="mt-2 inline-block rounded bg-red-700 px-4 py-2 text-lg font-semibold text-white"
+      >
+        Call {EMERGENCY_NUMBER}
+      </a>
+    </div>
+  );
+}
+
 export type ChatViewProps = {
   state: ChatState;
   input: string;
@@ -96,10 +120,14 @@ export function ChatView({
             <div
               key={m.id}
               aria-busy={m.state === 'streaming' || m.state === 'pending'}
-              className="self-start text-sm"
+              className={`text-sm ${m.state === 'done' && m.kind === 'emergency' ? 'self-stretch' : 'self-start'}`}
             >
               {m.state === 'pending' ? (
                 <p className="text-neutral-500">Thinking...</p>
+              ) : m.state === 'done' && m.kind === 'emergency' ? (
+                <EmergencyNotice content={m.content} />
+              ) : m.state === 'done' && (m.kind === 'refusal' || m.kind === 'no_answer') ? (
+                <RefusalNotice content={m.content} />
               ) : (
                 <p
                   className={

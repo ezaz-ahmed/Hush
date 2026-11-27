@@ -1,4 +1,4 @@
-import type { ChatCitation, ChatEvent } from '@hush/shared';
+import type { ChatAnswerKind, ChatCitation, ChatEvent } from '@hush/shared';
 
 export type ChatMessage =
   | { id: string; role: 'user'; content: string }
@@ -7,7 +7,7 @@ export type ChatMessage =
       role: 'assistant';
       content: string;
       state: 'pending' | 'streaming' | 'done' | 'error';
-      kind?: 'answer' | 'no_answer';
+      kind?: ChatAnswerKind;
       citations?: ChatCitation[];
     };
 
