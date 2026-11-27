@@ -1,124 +1,121 @@
-# Spec: Rate limiting on chat endpoint
+# Spec: Chat interface with streaming responses
 
 ## Objective
 
-`POST /chat` makes one embedding call and one LLM call per request, and both cost money. Nothing limits how often a client can call it. This ticket adds per-user and per-IP rate limits to `POST /chat` with `@nestjs/throttler`. A client over the limit gets a plain JSON `429` with a `Retry-After` header, before any database, embedding or LLM work and before the reply is hijacked for SSE. The 429 body gets a zod schema in `@hush/shared` so the chat UI (#32) can parse it.
+The API has `POST /chat`, which streams an answer as SSE (#28), validates citations (#29) and rate limits with a JSON 429 (#31). The web app has no chat UI: it only shows API health on `/`. This ticket adds a `/chat` page where a patient types a question, sees the answer stream in token by token, and gets clear error and retry states. It is built and tested against the shared contract in `@hush/shared` with a mocked `fetch`. `ChatModule` is still not mounted in `AppModule` (it waits for #40, #41 and #49 to #51), so there is no real end-to-end run in this ticket.
 
-**Acceptance criteria (from issue #31, amended):**
+**Acceptance criteria (from issue #32):**
 
-- [ ] Per-user and per-IP limits with `@nestjs/throttler`
-- [ ] ~~Clear 429 response handled in the UI~~ **Amended (user decision):** the web app has no chat UI yet (#32). #31 is API-only: a clear JSON 429 with `Retry-After`, and a shared `rateLimitErrorSchema` in `packages/shared/src/schemas/errors.ts` for #32 to use. Handling the 429 in the UI moves to #32. No web code in this ticket.
+- [ ] Message list, input, send button, loading state
+- [ ] Renders streamed tokens from SSE
+- [ ] Error and retry states (including the 429 that #31 moved here)
+- [ ] `POST /chat` SSE response sends `cache-control: no-cache, no-transform` (asserted in `chat.controller.test.ts` and `chat.int.test.ts`); JSON 400/401/404/429 paths unchanged
+- [ ] Container behaviour (send, Enter / Shift+Enter, retry, 429 disabling, unmount abort) covered by jsdom component tests
 
 **What exists today (checked in the code):**
 
-| Piece                                          | State                                                                                                                                                                                                                                                                |
-| ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `apps/api/src/chat/chat.controller.ts`         | `POST /chat`. The body goes through `ZodValidationPipe`, the user id through `@ChatUserId()`, then `resolveConversation` (a normal JSON 404 if needed), then `reply.hijack()` and SSE. No guards.                                                                    |
-| `apps/api/src/chat/chat-user.decorator.ts`     | `@ChatUserId()` reads `request.chatUserId`, which an upstream identity guard sets (#41). It checks the value is a uuid and returns 401 if it is missing or malformed.                                                                                                |
-| `apps/api/src/chat/testing/test-user.guard.ts` | Test-only global guard that copies the `x-test-user` header to `chatUserId`.                                                                                                                                                                                         |
-| `ChatModule`                                   | Not imported into `AppModule` (it waits for #40, #41 and #49 to #51). Tests mount it directly (`chat.int.test.ts`, `chat.module.test.ts`). Its provider factories read `ConfigService`, and those tests run without zod env validation, so they stub the env values. |
-| `apps/api/src/config/env.ts`                   | zod `envSchema`. No rate-limit vars.                                                                                                                                                                                                                                 |
-| `packages/shared/src/schemas/errors.ts`        | `validationErrorSchema` (strict, 400). No 429 schema.                                                                                                                                                                                                                |
-| `main.ts`                                      | `new FastifyAdapter()` with no options, so `trustProxy` is off and `request.ip` is the socket address. It listens on `localhost`.                                                                                                                                    |
-
-**Dependency check, `@nestjs/throttler`:** latest is `6.8.0`, published 2026-11-16, so it is maintained. The peer deps include `@nestjs/common`/`@nestjs/core` `^12.0.0`, which covers our 12.5.1. It works with any HTTP adapter: `getRequestResponse` uses `switchToHttp()`, headers are set through `res.header()` (Fastify) or `res.setHeader()`, and the default tracker is `req.ip`, which Fastify provides. It has no runtime deps besides the Nest peers. It is the package the issue names. Pin it exactly (`"@nestjs/throttler": "6.8.0"`), as the other deps are pinned.
+| Piece                                            | State                                                                                                                                                                                                                                                                                                                                                                   |
+| ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/shared/src/schemas/chat.ts`            | `chatRequestSchema` (strict: optional `conversationId` uuid, `message` trimmed, 1 to `CHAT_MESSAGE_MAX` = 2000 chars). `chatEventSchema`: discriminated union on `type`: `meta { conversationId, userMessageId }`, `token { text }`, `done { messageId, kind: 'answer' \| 'no_answer', content, citations }`, `error { code: 'llm_unavailable' \| 'internal' }`.        |
+| `packages/shared/src/schemas/errors.ts`          | `rateLimitErrorSchema` `{ statusCode: 429, error: 'Too Many Requests', retryAfter }` (seconds, same as the `Retry-After` header). `validationErrorSchema` for 400.                                                                                                                                                                                                      |
+| `apps/api/src/chat/chat.controller.ts`, `sse.ts` | Before the stream: JSON 400 (bad body), 401 (no valid `chatUserId`), 404 (unknown or not-owned conversation), 429. Then 200 `text/event-stream`; each frame is `event: <type>\ndata: <one-line JSON>\n\n`. On client disconnect the server aborts the pipeline.                                                                                                         |
+| `apps/api/src/chat/chat.service.ts`              | Order: `meta`, then zero or more `token`, then exactly one `done` or `error`. No chunks: no tokens, then `done` with `kind: 'no_answer'` and the fixed no-answer text. Failed citation check: tokens streamed, then `done` with `no_answer`. `done.content` is authoritative and replaces the streamed tokens (#28 decision). The user message is stored before `meta`. |
+| Identity                                         | `chatUserId` is set by an upstream guard that does not exist yet (#41); tests use `TestUserGuard` with an `x-test-user` header. The UI sends no identity header.                                                                                                                                                                                                        |
+| `apps/web/next.config.ts`                        | Rewrites `/api/:path*` to `${API_URL}/:path*`, so the browser can call `/api/chat` same-origin. The API has no CORS setup.                                                                                                                                                                                                                                              |
+| `apps/web/src/app/page.tsx`, `lib/status.ts`     | Server component showing API health; `status()` validates the body with a shared zod schema and treats any failure as "down".                                                                                                                                                                                                                                           |
+| `apps/web` tests                                 | Vitest, Node environment (no jsdom, no Testing Library). `page.test.tsx` renders with `renderToStaticMarkup` and mocks modules with `vi.mock`.                                                                                                                                                                                                                          |
+| `apps/web` deps                                  | `next` 16.4.6, `react` 19.3.1, `zod`, `@hush/shared`, Tailwind 4. No client components yet.                                                                                                                                                                                                                                                                             |
 
 ## Decisions
 
-- **Scope: `POST /chat` only.** Apply a `ChatThrottlerGuard` with `@UseGuards` on `ChatController`, not as `APP_GUARD`. That way `GET /health` is not throttled, and nothing changes once `ChatModule` is mounted in `AppModule`. `ThrottlerModule.forRootAsync` is imported in `ChatModule`. `ChatModule` stays unmounted.
-- **Two named throttlers, each with a 60 s window:**
-  - `ip`: tracker is the library default (`req.ip`, normalised). It counts every request, including ones that later get 401 or 400.
-  - `user`: tracker is `request.chatUserId`. It is skipped (`skipIf`) when `chatUserId` is not a valid uuid. Those requests count only against the IP limit, and `@ChatUserId()` returns 401 for them anyway. The check reuses the same `z.uuid()` rule as the decorator, so a junk value never becomes a key.
-  - A request has to pass both. The first throttler that blocks it decides `Retry-After`.
-- **Rejected before hijack.** Nest runs guards before pipes, param decorators and the handler, so a blocked request never reaches `ZodValidationPipe`, `resolveConversation`, retrieval or the LLM, and never hijacks the reply. The 429 is a normal Fastify JSON reply. Invalid bodies also count against the limits, which is intended (they cost a request too).
-- **Guard order relative to #41.** Intended order: identity guard (sets `chatUserId`) → `ChatThrottlerGuard` → consent guard → handler. The identity guard has to run first or the `user` throttler always skips. Today `TestUserGuard` is global, and Nest runs global guards before controller guards, so the order already holds in tests. Throttling before consent also caps how often the consent DB check can run. #41 has to keep this order (record it in the #41 spec). This ticket does not touch consent or guardrails.
-- **Config: two env vars, zod-validated, added to `apps/api/.env.example`:**
-  - `CHAT_RATE_LIMIT_PER_USER`: requests per user per minute, `z.coerce.number().int().min(1).default(10)`.
-  - `CHAT_RATE_LIMIT_PER_IP`: requests per IP per minute, `z.coerce.number().int().min(1).default(30)`. It is higher than the user limit because users behind shared NAT share an IP.
-  - The window stays fixed at 60 s. There is no window var, no block-duration var and no on/off switch. The `ThrottlerModule.forRootAsync` factory reads them with `config.getOrThrow`, so a missing value fails at boot instead of quietly turning throttling off. Tests without env validation supply numbers through `ConfigModule.forRoot({ load: [...] })`.
-- **429 response.** `ChatThrottlerGuard extends ThrottlerGuard` and overrides only `throwThrottlingException`. The override sets `Retry-After: <timeToBlockExpire seconds>` and throws `HttpException(body, 429)`.
-  - Set `setHeaders: false`. Without it the library sends `Retry-After-ip`, `Retry-After-user` and `X-RateLimit-*-{ip,user}` headers for named throttlers. With it, `Retry-After` is the only rate-limit header.
-  - The body matches the new shared schema:
+- **T8 finding: SSE buffered by Next's gzip; fixed in the API (user approved).** Local check with `next start` through the `/api/:path*` rewrite: with `Accept-Encoding: gzip` (browsers always send it) all frames arrived together at about 3.5 s. With `cache-control: no-cache, no-transform` Next skips compression and frames arrived about 700 ms apart. Decision: change the API header in `chat.controller.ts` (SSE branch only, after hijack) instead of touching `next.config.ts`.
 
-    ```ts
-    /** The 429 body POST /chat returns when a rate limit is hit. */
-    export const rateLimitErrorSchema = z.strictObject({
-      statusCode: z.literal(429),
-      error: z.literal('Too Many Requests'),
-      retryAfter: z.number().int().positive(), // seconds; same value as the Retry-After header
-    });
-    export type RateLimitError = z.infer<typeof rateLimitErrorSchema>;
-    ```
+- **New route `/chat`.** `apps/web/src/app/chat/page.tsx` (server component) renders a `'use client'` `Chat` component. `/` keeps its health check. A separate route keeps the consent gate (#34) simple to add later.
+- **Transport: `fetch` + `ReadableStream`, not `EventSource`.** `EventSource` cannot POST. The client posts `{ message, conversationId? }` as JSON to the relative URL `/api/chat` (the existing rewrite), so no CORS change and no public env var. Default `credentials` (same-origin), so cookies from #41 will flow later without changes.
+- **SSE parser is a pure function.** Decode bytes with `TextDecoder` in streaming mode (so a multi-byte character split across chunks survives), buffer text, split on blank lines, read the `data:` line of each frame, `JSON.parse` it and validate with `chatEventSchema.safeParse`. The `event:` line is ignored; `type` in the data is the source of truth. A frame that fails to parse or validate is treated as a stream error (never rendered). A trailing partial frame at end of stream is dropped.
+- **Client validation mirrors the server.** Send is disabled when the trimmed input is empty; the textarea has `maxLength={CHAT_MESSAGE_MAX}`. The body is built with `chatRequestSchema.parse` so the client never sends a shape the server rejects.
+- **Conversation continuity.** The `meta` event's `conversationId` is kept in state and sent with the next message. No history loading (there is no endpoint for it) and no "new conversation" button. Reloading the page starts a new conversation.
+- **One request at a time.** Input and send are disabled while a request is in flight.
+- **UI states** (one reducer, pure and unit tested):
 
-    It is strict, like `validationErrorSchema`. `retryAfter` is also in the body so #32 can read it without a CORS `Access-Control-Expose-Headers` change. The body does not say which limit was hit. The client doesn't need to know, and leaving it out makes the limits a little harder to probe.
-- **No PII (rule 2).** The 429 body holds no IP, user id or tracker. Nothing is logged on a 429: no IP, no user id, no line at all. The library hashes storage keys (`sha256(class-handler-name-tracker)`) and keeps them only in memory, where they expire with the window.
-- **No redaction implications (rule 1).** The throttler reads only `req.ip` and `chatUserId`. It never reads message text and makes no external call, and it runs before every external call.
-- **Storage: the library's default in-memory store.** `shortcut: counters are per process, so N instances allow N x the limit; move to a shared store (Redis) if the API runs more than one instance.` Put this comment on the `ThrottlerModule` registration.
-- **`trustProxy`: not changed here.** With it off, behind a reverse proxy every client has the proxy's IP, so the `ip` limit acts as one global limit. The user limit still works. The deployment target is not decided and `ChatModule` is not mounted yet, so changing `main.ts` now would be guessing (Open question 1).
+  | State     | Trigger                                    | UI                                                                                                                                         |
+  | --------- | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------ |
+  | idle      | initial, or after `done`                   | Input enabled. Empty list shows a one-line prompt.                                                                                         |
+  | sending   | submit, before the first `token` or `done` | User message appended; assistant placeholder with a "Thinking..." indicator; input disabled.                                               |
+  | streaming | each `token`                               | Assistant message text grows by `token.text`.                                                                                              |
+  | done      | `done`                                     | Assistant text **replaced** by `done.content`; `kind` and `citations` kept on the message (not rendered here, see #33, #35). Back to idle. |
+  | error     | see below                                  | Failed assistant turn shows the error text and a Retry button. Input re-enabled.                                                           |
 
-**Out of scope:** any web/UI code, including handling the 429 in the UI (#32); mounting `ChatModule`; identity, consent, redaction and guardrails (#40, #41, #49 to #51); throttling other routes; a shared or distributed store; `trustProxy`/deployment config; per-route or tiered limits; metrics on 429s (#73 onward).
+- **Errors.** Fixed, PII-free copy; nothing is logged to the console.
+
+  | Cause                                                                | Message (draft)                                                                                                                                    |
+  | -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+  | 429 with a body that passes `rateLimitErrorSchema`                   | "You're sending messages too fast. Try again in N seconds." Retry and Send are disabled for `retryAfter` seconds (one timeout, no live countdown). |
+  | Other non-2xx (400, 401, 404, 5xx), or a 429 with a bad body         | "Something went wrong. Please try again."                                                                                                          |
+  | `fetch` rejects (network)                                            | "Couldn't reach Hush. Check your connection and try again."                                                                                        |
+  | `error` event, `llm_unavailable`                                     | "The assistant is unavailable right now. Please try again."                                                                                        |
+  | `error` event, `internal`; invalid frame; stream ends without `done` | "Something went wrong. Please try again."                                                                                                          |
+
+- **Retry** resends the last user message (same `conversationId` if one was received) and replaces the failed assistant turn in place. It does not add a second copy of the user message to the list. Known effect: if the failure came after `meta`, the server already stored that user message, so the conversation holds it twice. Accepted for #32 (decided); noted in the PR, and an API follow-up issue is filed at ship time.
+- **Abort.** The in-flight request uses an `AbortController`, aborted when the component unmounts; an abort is silent (no error state). No Stop button (decided).
+- **Accessibility (baseline; the full pass is #37).** Visible `<label>` for the textarea; Enter submits, Shift+Enter inserts a newline; the send button is a real `<button type="submit">` in a `<form>`. The message list is `role="log"` with `aria-live="polite"`, and the streaming assistant message is `aria-busy="true"` until `done` or error, so screen readers announce the final text once rather than every token. Error text is in the same live region.
+- **New dev dependencies (decided):** `jsdom`, `@testing-library/react`, `@testing-library/user-event`, plus `@testing-library/dom` (required peer of the other two), all in `apps/web` devDependencies, exact versions. No runtime dependency.
+
+**Out of scope:** rendering citations or a source panel (#33; `[S1]` markers show as plain text); consent gate and privacy notice (#34, #41); refusal and emergency styling (#35; `no_answer` renders as a normal assistant message); full accessibility and mobile pass (#37); my-data page (#36); Playwright and e2e (#55, #57); identity and user headers (#41); mounting `ChatModule` or any other API change (the one allowed API change is the `cache-control` header, see Decisions); conversation history, multiple conversations, Stop button, markdown rendering, persisting messages in the browser (`localStorage` etc.).
 
 ## Risk
 
-**Not in CLAUDE.md's high-risk list** (redaction, consent, audit, retention, guardrails, prompts). The guard comes before consent but does not change consent. The guard order above is written down so #41 keeps it. The PR states that the 429 path logs nothing and returns no PII.
+**Not in CLAUDE.md's listed high-risk areas** (redaction, consent, audit, retention, guardrails, prompts): web-only, no API, prompt or guardrail change. Privacy points still apply:
 
-- **Locking out real users with shared IPs.** Mitigation: the IP limit is set above the user limit, both are configurable, and `trustProxy` is an open question for deployment.
-- **Throttling not applied (misconfig).** Mitigation: `getOrThrow` on both vars, and an integration test on the mounted module.
+- **PII client-side (rule 2).** The user's message is shown on screen and sent to our own API only. No `console.*` of messages, events or errors; no browser storage. A test spies on `console` during the error paths.
+- **SSE through the Next rewrite may buffer.** `next start` gzips responses by default, and a proxied `text/event-stream` could arrive in one piece instead of token by token. Checked locally before the PR (see Open questions, decided 4); it cannot be part of the committed tests while `ChatModule` is unmounted. Fallbacks if it buffers: `compress: false` in `next.config.ts`, or a Route Handler that pipes the body.
 
 ## Design
 
 ### Files
 
-| File                                                | Change                                                                                                                                                      |
-| --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `apps/api/package.json`, `pnpm-lock.yaml`           | Add `"@nestjs/throttler": "6.8.0"`.                                                                                                                         |
-| `packages/shared/src/schemas/errors.ts` (+ `.test`) | `rateLimitErrorSchema`, `RateLimitError`. It is already exported through `index.ts` (`export * from './schemas/errors.js'`).                                |
-| `apps/api/src/config/env.ts` (+ `env.test.ts`)      | `CHAT_RATE_LIMIT_PER_USER`, `CHAT_RATE_LIMIT_PER_IP` with defaults.                                                                                         |
-| `apps/api/.env.example`                             | Both vars, with a one-line comment each and their defaults.                                                                                                 |
-| `apps/api/src/chat/chat-throttler.guard.ts` (new)   | `ChatThrottlerGuard` (overrides `throwThrottlingException`), plus the `ip`/`user` throttler options builder (`user` tracker and `skipIf`).                  |
-| `apps/api/src/chat/chat-user.decorator.ts`          | Export the existing uuid schema (or a small `parseChatUserId`) so the guard and the decorator share one rule. Decorator behaviour stays the same.           |
-| `apps/api/src/chat/chat.module.ts`                  | `ThrottlerModule.forRootAsync({ inject: [ConfigService], useFactory })` with `setHeaders: false` and the shortcut comment.                                  |
-| `apps/api/src/chat/chat.controller.ts`              | `@UseGuards(ChatThrottlerGuard)` on the class.                                                                                                              |
-| `chat.int.test.ts`, `chat.module.test.ts`           | Supply both limits through `ConfigModule` `load`. The existing suites get limits high enough that they never throttle, and their assertions stay unchanged. |
-| `chat-throttler.int.test.ts` (new)                  | The cases below.                                                                                                                                            |
+| File                                        | Change                                                                                                                                                                                                               |
+| ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/web/src/lib/sse.ts` (new)             | `readChatEvents(body: ReadableStream<Uint8Array>): AsyncGenerator<ChatEvent>`; throws on an invalid frame. Frame splitting as a small exported pure helper.                                                          |
+| `apps/web/src/lib/chat-client.ts` (new)     | `streamChat(req: ChatRequest, signal): Promise<ChatResult>`: `fetch('/api/chat', POST JSON)`; non-2xx mapped to a typed error (`rate_limited` with `retryAfter`, `http`, `network`); 2xx returns the event iterator. |
+| `apps/web/src/app/chat/chat-state.ts` (new) | `chatReducer` + action and state types (states table above). Pure.                                                                                                                                                   |
+| `apps/web/src/app/chat/chat.tsx` (new)      | `'use client'`. `Chat` (container: `useReducer`, `streamChat`, abort on unmount, retry, rate-limit timeout) and `ChatView` (presentational, props only).                                                             |
+| `apps/web/src/app/chat/page.tsx` (new)      | Server component rendering `<Chat />` with a heading.                                                                                                                                                                |
+| Tests next to each (`*.test.ts(x)`)         | See below.                                                                                                                                                                                                           |
+
+No change to `@hush/shared`, the API or env. `apps/web/package.json` and the lockfile gain the dev dependencies above. No Vitest config file: the DOM test files opt in with `// @vitest-environment jsdom`.
 
 ## Testing strategy
 
-Tests first. Everything is deterministic: `MockLlmProvider`, `FakeEmbeddingProvider`, and `app.inject` with a fixed `remoteAddress` per request. No real APIs.
+Tests first. Vitest stays in the Node environment by default; only files that need a DOM start with `// @vitest-environment jsdom` (the existing Node tests are untouched). Node 26 has `ReadableStream`, `TextEncoder`, `Response` and `fetch` built in, so streams are real and only `fetch` is stubbed (`vi.stubGlobal`).
 
-**Unit**
+- **`sse.test.ts`:** one frame; several frames in one chunk; a frame split across chunks at every byte offset; a multi-byte character split across chunks; trailing partial frame dropped; `event:` line ignored; invalid JSON throws; JSON that fails `chatEventSchema` throws; empty stream yields nothing.
+- **`chat-client.test.ts`:** posts JSON to `/api/chat` with the right body (with and without `conversationId`) and passes the signal; 200 yields the parsed events in order; 429 with a valid body gives `rate_limited` and `retryAfter`; 429 with a bad body, 400, 401, 404, 500 give `http`; `fetch` rejection gives `network`; an `AbortError` is reported as aborted, not as an error.
+- **`chat-state.test.ts`:** submit appends user + pending assistant; tokens append; `done` replaces content and stores `kind`, `citations`, and `conversationId` from `meta`; each error cause gives the right error state and copy; retry replaces the failed assistant turn and keeps one user message; a second submit while in flight is ignored. (Abort is handled in the container, not the reducer; see `chat-dom.test.tsx`.)
+- **`chat.test.tsx` (`renderToStaticMarkup`, as `page.test.tsx` does):** `<Chat />` initial render has the labelled textarea with `maxLength` 2000, a submit button, and `role="log"` `aria-live="polite"`. `ChatView` rendered per state: streaming message has `aria-busy="true"`; done message shows `content`; error shows its copy and a Retry button; rate-limited shows N seconds and disabled buttons; input disabled while sending.
+- **`chat-dom.test.tsx` (jsdom, Testing Library + user-event, `fetch` stubbed):** typing then clicking Send posts the message and shows tokens, then the `done` content; Enter submits; Shift+Enter inserts a newline and does not submit; empty/whitespace input keeps Send disabled; input and Send are disabled while in flight; a failed request shows the error and Retry resends the same message without a second user bubble; a 429 shows the seconds and disables Send and Retry until the timeout (fake timers), then re-enables; unmounting mid-stream aborts the request signal and shows no error. Call `cleanup()` in `afterEach` (no Vitest globals).
+- **Privacy:** a `console` spy across the error tests sees no calls.
 
-- `errors.test.ts`: `rateLimitErrorSchema` accepts `{ statusCode: 429, error: 'Too Many Requests', retryAfter: 42 }`. It rejects extra keys (for example `ip`), status codes other than 429, `retryAfter` values of 0, negative or non-integer, and a missing `retryAfter`.
-- `env.test.ts`: the defaults apply (10 and 30) when the vars are unset. String values are coerced. `0`, negative, non-integer and non-numeric values are rejected.
-- `chat-throttler.guard.test.ts`: the `user` tracker returns `chatUserId`. `skipIf` is true when `chatUserId` is absent, not a string, or not a uuid, and false for a valid uuid. `throwThrottlingException` sets `Retry-After` to `timeToBlockExpire` and throws a 429 whose response passes `rateLimitErrorSchema`.
-
-**Integration (real Fastify, `ChatModule` mounted as in `chat.int.test.ts`, `TestUserGuard` global; low limits via `load`, e.g. user 2 and IP 3)**
-
-- User limit: requests 1 and 2 from user A get 200 SSE, and request 3 gets a 429 with `content-type: application/json` (not `text/event-stream`). The body passes `rateLimitErrorSchema`, the `Retry-After` header is a positive integer equal to `body.retryAfter`, and no `Retry-After-*` or `X-RateLimit-*` headers are present.
-- Rejected before work: on the 429 request the LLM mock and the embedding provider are not called, and no message row is written for that request.
-- The limits are per user: after A is blocked, user B on a different IP still gets 200.
-- IP limit: 4 requests from one IP spread over different users means the 4th gets 429. The same user from a different IP is still limited by the user limit.
-- No user id: requests without `x-test-user` get 401 until the IP limit is reached, then 429 (proves the `ip`-only path).
-- Invalid body: a 400 still counts toward the limit, and once over the limit the response is 429 instead of 400.
-- `GET /health` is not throttled: covered because the guard is controller-scoped. Assert that the chat controller carries the guard metadata, without mounting `AppModule`.
-- No PII in logs: spy on `Logger` and `console`. A 429 logs nothing that contains the IP, the user id or the message text.
-- Existing `chat.int.test.ts` and `chat.module.test.ts` cases pass unchanged.
+Real browser behaviour (layout, real SSE through the Next rewrite) stays outside the committed tests; e2e (#57) covers it later.
 
 ## Boundaries
 
-- Always: tests first; reject before hijack; use `.js` import extensions; validate config with zod; keep `retryAfter` and `Retry-After` equal.
-- Ask first: mounting `ChatModule`; changing `trustProxy` or `main.ts`; adding a shared store such as Redis; throttling routes other than `/chat`; adding more env knobs; any web code.
-- Never: log IPs, user ids or message text; put the tracker or the name of the limit that was hit in the 429 body; make the throttler optional or bypassable by config; let a throttled request reach retrieval or the LLM.
+- Always: tests first; validate every server response with the shared zod schemas; fixed error copy with no user content; relative `/api/chat` URL; read the Next 16 docs in `apps/web/node_modules/next/dist/docs/` before writing Next code.
+- Ask first: adding any dependency beyond the decided dev dependencies (an SSE library, etc.); changing `next.config.ts`; any API or `@hush/shared` change beyond the approved `cache-control` header; mounting `ChatModule` (even temporarily in a commit).
+- Never: log or store message text client-side; render a frame that failed validation; send an identity or `x-test-user` header from the UI; weaken an existing test.
 
 ## Success criteria
 
-- `pnpm lint && pnpm typecheck && pnpm test && pnpm test:int && pnpm build` pass.
+- `pnpm lint && pnpm typecheck && pnpm test && pnpm build` pass.
 - Every case in the testing strategy has a test.
-- One new dependency (`@nestjs/throttler` 6.8.0, pinned), with the reason in the PR. Two new env vars, both in `.env.example`. No migration, no prompt change, no web change.
-- The PR notes the amended UI criterion (moved to #32), the in-memory store limit, the guard order #41 has to keep, and the `trustProxy` question.
-- No evals change (no prompt, retrieval or model change), so there is no `pnpm eval` run.
+- Only the four decided dev dependencies are added; no env change; the only API change is the SSE `cache-control: no-cache, no-transform` header.
+- DOM interaction tests (send, Enter / Shift+Enter, retry, 429 disabling, unmount abort) pass in jsdom.
+- The PR notes: no real end-to-end run (ChatModule unmounted), the rewrite-buffering risk, and the duplicate-user-message effect of retry.
 
-## Open questions
+## Decisions on former open questions
 
-1. **`trustProxy` when deployed.** Behind Vercel, Render, Fly or a similar proxy, `request.ip` is the proxy's address unless Fastify is created with `trustProxy` (ideally the hop count or proxy CIDR, not `true`, so a client cannot spoof `X-Forwarded-For`). **Proposed:** leave it for the deployment ticket and record it there. Until then the IP limit is effectively global behind a proxy.
-2. **Default limits.** Proposed: 10 per user and 30 per IP per minute. Is that right for an FAQ chat, or would you rather start lower (for example 5 per user) to protect LLM spend?
+1. **Real-DOM tests: DECIDED, yes.** Add `jsdom`, `@testing-library/react`, `@testing-library/user-event` (and the `@testing-library/dom` peer) as `apps/web` devDeps. Per-file `// @vitest-environment jsdom`; Node tests unchanged. Maintenance and React 19 compatibility checked with `pnpm view` before adding.
+2. **Stop button: DECIDED, no.** Abort on unmount only.
+3. **Retry duplicates the user message after `meta`: DECIDED, accept.** Document in the PR; file a follow-up API issue (retry by `userMessageId`) at ship time.
+4. **Streaming through the rewrite: DECIDED.** Check locally before the PR with an uncommitted `ChatModule` mount and `TestUserGuard` under `next start`. If tokens buffer, ask the user before changing `next.config.ts`.
+5. **Route: DECIDED, `/chat`.** `/` unchanged.

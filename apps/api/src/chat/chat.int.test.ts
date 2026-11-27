@@ -129,7 +129,7 @@ describe('POST /chat (real Postgres, real Fastify)', () => {
     const res = await post({ message: QUESTION });
     expect(res.statusCode).toBe(200);
     expect(res.headers['content-type']).toBe('text/event-stream');
-    expect(res.headers['cache-control']).toBe('no-cache');
+    expect(res.headers['cache-control']).toBe('no-cache, no-transform');
     expect(res.headers['x-accel-buffering']).toBe('no');
     expect(res.headers['x-test']).toBe('1'); // onRequest-hook headers survive the hijack
     const events = parseSse(res.body);

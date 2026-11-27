@@ -29,7 +29,7 @@ export class ChatController {
     raw.writeHead(200, {
       ...(reply.getHeaders() as OutgoingHttpHeaders), // hijack skips Fastify's header flush; keep onRequest-hook headers
       'content-type': 'text/event-stream',
-      'cache-control': 'no-cache',
+      'cache-control': 'no-cache, no-transform', // no-transform: Next's gzip on the /api rewrite buffers SSE otherwise
       'x-accel-buffering': 'no',
     });
     const ac = new AbortController();

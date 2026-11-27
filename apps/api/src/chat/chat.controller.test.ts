@@ -80,7 +80,7 @@ describe('ChatController', () => {
     expect(raw.head?.headers).toEqual({
       'x-test': '1',
       'content-type': 'text/event-stream',
-      'cache-control': 'no-cache',
+      'cache-control': 'no-cache, no-transform',
       'x-accel-buffering': 'no',
     });
   });

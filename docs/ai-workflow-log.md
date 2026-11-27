@@ -13,6 +13,13 @@ Format:
 - **Source:** commit sha(s) and/or PR number
 ```
 
+## 2026-11-27: SSE needs `no-transform` to stream through the Next rewrite (#32)
+
+- **Context:** The chat UI calls the API through Next's `/api/:path*` rewrite. A local check with a stub SSE server under `next start` showed Next's built-in gzip buffers the whole stream when the client sends `Accept-Encoding: gzip` (browsers always do): all frames arrived together at ~3.5 s instead of ~700 ms apart. `content-encoding: identity` did not help.
+- **Decision:** The user chose a one-line API change in #32 instead of `compress: false` (which disables gzip for every page): the SSE reply sends `cache-control: no-cache, no-transform`, which Next's compression skips. Also decided in #32: four dev deps (jsdom, Testing Library react/dom/user-event) so the chat container has real DOM tests; a retry after `meta` stores the user message twice, accepted and filed as a follow-up API issue.
+- **Verified by:** Stub re-run with `no-transform` (frames ~700 ms apart, no `Content-Encoding`); `chat.controller.test.ts` and `chat.int.test.ts` assert the header.
+- **Source:** PR for #32
+
 ## 2026-11-27: Chat rate limiting is API-only; 429 UI moves to #32 (#31)
 
 - **Context:** Issue #31 asks for per-user and per-IP limits with `@nestjs/throttler` and a 429 "handled in the UI", but there is no chat UI yet (#32).
